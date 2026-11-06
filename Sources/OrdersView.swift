@@ -92,7 +92,7 @@ struct OrderRow: View {
                     .foregroundStyle(statusColor)
                     .clipShape(Capsule())
 
-                if !order.statusRaw.isEmpty && order.status != .unknown {
+                if !order.statusRaw.isEmpty {
                     Text(order.statusRaw)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -111,6 +111,22 @@ struct OrderRow: View {
                 Text("订单号 \(order.orderNo)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+            }
+
+            if !order.shopName.isEmpty || !order.logistics.isEmpty {
+                HStack(spacing: 8) {
+                    if !order.shopName.isEmpty {
+                        Text(order.shopName)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if !order.logistics.isEmpty {
+                        Text(order.logistics)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
             }
         }
         .padding(.vertical, 4)

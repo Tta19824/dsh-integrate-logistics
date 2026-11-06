@@ -125,7 +125,7 @@ enum OrderClient {
             throw FetchError.note("拼多多的登录态失效了（页面跳到了登录页）。请点「重新登录」，登录完再刷新订单。")
         }
 
-        let orders = PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON)
+        let orders = attachLogistics(PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON), payloadJSON: capture.payloadJSON)
 
         var note = info.entryCount > 0
             ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单"
@@ -166,6 +166,42 @@ enum OrderClient {
             }
         }
         return out
+    }
+
+    /// 把物流接口里那句「运输中…」挂到对应的订单上
+    private static func attachLogistics(_ orders: [Order], payloadJSON: String) -> [Order] {
+        guard !orders.isEmpty,
+              let data = payloadJSON.data(using: .utf8),
+              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return orders }
+
+        var snSet = Set<String>()
+        var info = ""
+        for entry in entries {
+            let u = entry["u"] as? String ?? ""
+            guard let body = entry["b"] as? String,
+                  let bodyData = body.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any]
+            else { continue }
+            if u.contains("track/status"), let list = obj["result_list"] as? [[String: Any]] {
+                for item in list {
+                    if let sn = item["order_sn"] as? String { snSet.insert(sn) }
+                }
+            }
+            if u.contains("track/latest"),
+               let result = obj["result"] as? [String: Any],
+               let text = result["info"] as? String, !text.isEmpty {
+                info = text
+            }
+        }
+
+        guard !info.isEmpty, !snSet.isEmpty else { return orders }
+        return orders.map { order in
+            guard snSet.contains(order.orderNo) else { return order }
+            var copy = order
+            copy.logistics = String(info.prefix(80))
+            return copy
+        }
     }
 
     private static func shortPath(_ path: String) -> String {

@@ -109,9 +109,10 @@ enum PinduoduoParser {
         let keys = Set(dict.keys)
         let hasNo = !keys.isDisjoint(with: ["order_sn", "orderSn", "order_sn_str", "orderSnStr", "order_no", "orderNo"])
         let hasBody = !keys.isDisjoint(with: [
-            "goods", "goods_list", "goodsList", "order_goods_list", "orderGoodsList", "items",
+            "goods", "goods_list", "goodsList", "order_goods", "orderGoods",
+            "order_goods_list", "orderGoodsList", "items", "goods_info",
             "order_status", "orderStatus", "order_status_desc", "orderStatusDesc", "status_desc",
-            "order_amount", "orderAmount", "pay_amount", "payAmount"
+            "order_status_prompt", "order_amount", "orderAmount", "pay_amount", "payAmount"
         ])
         return hasNo && hasBody
     }
@@ -122,13 +123,15 @@ enum PinduoduoParser {
         ]) ?? ""
         guard orderNo.count >= 8 else { return nil }
 
-        let statusRaw = firstString(dict, [
-            "order_status_desc", "orderStatusDesc", "status_desc", "statusDesc",
-            "order_status_str", "status_str", "status_text", "statusText", "status_name"
-        ]) ?? firstString(dict, ["order_status", "orderStatus", "status"]).map { "状态码 \($0)" } ?? ""
+        let prompt = firstString(dict, [
+            "order_status_prompt", "orderStatusPrompt", "order_status_desc", "orderStatusDesc",
+            "status_desc", "statusDesc", "order_status_str", "status_str", "status_text", "statusText"
+        ]) ?? ""
+        let code = firstInt(dict, ["status", "order_status", "orderStatus"]) ?? -1
+        let statusRaw = prompt.isEmpty ? (code >= 0 ? "状态码 \(code)" : "未识别") : prompt
 
         var amount = firstString(dict, [
-            "order_amount", "orderAmount", "pay_amount", "payAmount",
+            "display_amount", "order_amount", "orderAmount", "pay_amount", "payAmount",
             "total_amount", "totalAmount", "amount"
         ]) ?? ""
         if let cents = dict["pay_amount_cent"] as? Int, amount.isEmpty {
@@ -138,7 +141,10 @@ enum PinduoduoParser {
 
         var title = ""
         var shop = firstString(dict, ["mall_name", "mallName", "store_name", "storeName", "shop_name", "shopName"]) ?? ""
-        for key in ["goods", "goods_list", "goodsList", "order_goods_list", "orderGoodsList", "items", "goods_info"] {
+        if shop.isEmpty, let mall = dict["mall"] as? [String: Any] {
+            shop = firstString(mall, ["mall_name", "mallName", "shop_name", "shopName"]) ?? ""
+        }
+        for key in ["order_goods", "orderGoods", "goods", "goods_list", "goodsList", "order_goods_list", "orderGoodsList", "items", "goods_info"] {
             guard let arr = dict[key] as? [[String: Any]], let first = arr.first else { continue }
             title = firstString(first, ["goods_name", "goodsName", "goods_title", "goodsTitle", "title", "name"]) ?? ""
             if shop.isEmpty {
@@ -161,7 +167,7 @@ enum PinduoduoParser {
             title: title,
             shopName: shop,
             amount: amount,
-            status: OrderStatus.parse(statusRaw),
+            status: pddStatus(code: code, prompt: prompt),
             statusRaw: statusRaw.isEmpty ? "未识别" : statusRaw,
             orderTime: normalizeTime(time),
             logistics: "",
@@ -206,6 +212,34 @@ enum PinduoduoParser {
             if let n = dict[key] as? NSNumber { return n.stringValue }
         }
         return nil
+    }
+
+    private static func firstInt(_ dict: [String: Any], _ keys: [String]) -> Int? {
+        for key in keys {
+            if let n = dict[key] as? Int { return n }
+            if let n = dict[key] as? NSNumber { return n.intValue }
+            if let s = dict[key] as? String, let v = Int(s) { return v }
+        }
+        return nil
+    }
+
+    /// 拼多多的状态是数字码，但每单还带一句 prompt（充值到账 / 交易成功 / 交易已取消…），
+    /// prompt 更准，先用它，认不出再退回数字码。
+    static func pddStatus(code: Int, prompt: String) -> OrderStatus {
+        if prompt.contains("取消") || prompt.contains("关闭") { return .cancelled }
+        if prompt.contains("退款") || prompt.contains("售后") || prompt.contains("退货") { return .refunding }
+        if prompt.contains("待收货") || prompt.contains("运输") || prompt.contains("派送") || prompt.contains("待取件") { return .shipped }
+        if prompt.contains("待发货") || prompt.contains("待成团") { return .paid }
+        if prompt.contains("待付款") || prompt.contains("待支付") { return .unpaid }
+        if prompt.contains("成功") || prompt.contains("到账") || prompt.contains("完成") || prompt.contains("已签收") { return .completed }
+        switch code {
+        case 0: return .unpaid
+        case 1, 2, 3: return .shipped
+        case 4, 5: return .completed
+        case 6: return .refunding
+        case 7: return .cancelled
+        default: return .unknown
+        }
     }
 
     // MARK: 渲染后纯文本
