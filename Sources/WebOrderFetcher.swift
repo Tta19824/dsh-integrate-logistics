@@ -14,6 +14,8 @@ final class WebOrderFetcher: NSObject {
         var title: String
         var text: String
         var payloadJSON: String
+        var landedOnLogin = false
+        var tried: [String] = []
     }
 
     private var webView: WKWebView?
@@ -62,13 +64,16 @@ final class WebOrderFetcher: NSObject {
     })
     """
 
-    func capture(url: URL, seconds: Double = 26) async throws -> Capture {
+    /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
+    func capture(urls: [URL], cookieHeader: String, seconds: Double = 22) async throws -> Capture {
         let cfg = WKWebViewConfiguration()
         cfg.websiteDataStore = .default()
         cfg.allowsInlineMediaPlayback = true
         cfg.userContentController.addUserScript(
             WKUserScript(source: hookScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         )
+
+        await prefillCookies(cookieHeader)
 
         let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 820), configuration: cfg)
         wv.alpha = 0.02
@@ -77,53 +82,111 @@ final class WebOrderFetcher: NSObject {
         webView = wv
         defer { detach() }
 
-        var request = URLRequest(url: url)
-        request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-            forHTTPHeaderField: "User-Agent"
-        )
+        var tried: [String] = []
 
-        var loaded = try await waitForData(wv: wv, request: request, seconds: seconds)
+        for url in urls {
+            var request = URLRequest(url: url)
+            request.setValue(
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                forHTTPHeaderField: "User-Agent"
+            )
 
-        // 第一次没东西就重载一次（有时首屏被风控或跳转打断）
-        if !loaded.hasData {
-            loaded = try await waitForData(wv: wv, request: request, seconds: seconds * 0.8)
+            _ = try? await wv.load(request)
+            let loaded = await waitForData(wv: wv, seconds: seconds)
+
+            var title = (try? await wv.evaluateJavaScript("document.title || ''")) as? String ?? ""
+            var text = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? ""
+            tried.append("\(shortURL(url)) → \(title.isEmpty ? "无标题" : title)")
+
+            // 落到登录页：说明这个地址要求重新验证，换下一个
+            if isLoginPage(title: title, text: text) {
+                continue
+            }
+
+            // 首屏没数据，同址再等一轮（不再重载，避免触发风控）
+            if !loaded && text.count < 200 {
+                _ = await waitForData(wv: wv, seconds: seconds * 0.7)
+                title = (try? await wv.evaluateJavaScript("document.title || ''")) as? String ?? title
+                text = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? text
+                if isLoginPage(title: title, text: text) { continue }
+            }
+
+            let payload = (try? await wv.evaluateJavaScript("JSON.stringify(window.__dshCap || [])")) as? String ?? "[]"
+            return Capture(
+                finalURL: wv.url?.absoluteString ?? url.absoluteString,
+                title: title,
+                text: text,
+                payloadJSON: payload,
+                landedOnLogin: false,
+                tried: tried
+            )
         }
 
+        // 全都落到登录页
         let title = (try? await wv.evaluateJavaScript("document.title || ''")) as? String ?? ""
         let text = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? ""
-        let payload = (try? await wv.evaluateJavaScript("JSON.stringify(window.__dshCap || [])")) as? String ?? "[]"
-
         return Capture(
-            finalURL: wv.url?.absoluteString ?? url.absoluteString,
+            finalURL: wv.url?.absoluteString ?? "",
             title: title,
             text: text,
-            payloadJSON: payload
+            payloadJSON: "[]",
+            landedOnLogin: true,
+            tried: tried
         )
     }
 
-    private struct Loaded {
-        var hasData: Bool
+    private func isLoginPage(title: String, text: String) -> Bool {
+        if title == "登录" { return true }
+        let marks = ["发送验证码", "请输入手机号", "密码登录", "请先登录", "扫码登录", "同意服务协议与隐私政策"]
+        let hits = marks.filter { text.contains($0) }.count
+        return hits >= 2
     }
 
-    private func waitForData(wv: WKWebView, request: URLRequest, seconds: Double) async throws -> Loaded {
-        _ = try await wv.load(request)
+    /// 把钥匙串里存的 cookie 灌回 WebView，避免 WebView 自己的存储被系统清过
+    private func prefillCookies(_ header: String) async {
+        guard !header.isEmpty else { return }
+        let store = WKWebsiteDataStore.default().httpCookieStore
+        let pairs = header.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
+        let domains = [".pinduoduo.com", ".yangkeduo.com"]
+        for pair in pairs {
+            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            let name = String(parts[0]).trimmingCharacters(in: .whitespaces)
+            let value = String(parts[1]).trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty else { continue }
+            for domain in domains {
+                let props: [HTTPCookiePropertyKey: Any] = [
+                    .name: name,
+                    .value: value,
+                    .domain: domain,
+                    .path: "/",
+                ]
+                guard let cookie = HTTPCookie(properties: props) else { continue }
+                await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                    store.setCookie(cookie) { cont.resume() }
+                }
+            }
+        }
+    }
+
+    private func waitForData(wv: WKWebView, seconds: Double) async -> Bool {
         let deadline = Date().addingTimeInterval(seconds)
-        var hasData = false
         while Date() < deadline {
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard let raw = (try? await wv.evaluateJavaScript(statsJS)) as? String,
                   let data = raw.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else { continue }
             let bytes = (obj["s"] as? Int) ?? 0
             let chars = (obj["t"] as? Int) ?? 0
-            if bytes > 30_000 || chars > 600 {
-                hasData = true
-                break
-            }
+            if bytes > 30_000 || chars > 600 { return true }
         }
-        return Loaded(hasData: hasData)
+        return false
+    }
+
+    private func shortURL(_ url: URL) -> String {
+        let p = url.path.isEmpty ? "/" : url.path
+        return "\(url.host ?? "")\(p)"
     }
 
     private func attach(_ wv: WKWebView) {

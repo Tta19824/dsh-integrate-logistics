@@ -38,6 +38,7 @@ struct CaptureInfo {
     var pageTitle = ""
     var snippet = ""
     var uaProbe: [String] = []
+    var attempts: [String] = []
 }
 
 enum OrderClient {
@@ -73,16 +74,22 @@ enum OrderClient {
 
     /// 用真 WebView 打开订单页，让平台自己的 JS 去请求数据，再把渲染结果和接口响应抓回来。
     private static func fetchPinduoduo(cookie: String) async throws -> FetchOutcome {
-        guard let url = URL(string: "https://mobile.pinduoduo.com/order.html") else {
-            throw FetchError.badURL
-        }
+        let candidates = [
+            "https://mobile.pinduoduo.com/order.html",
+            "https://mobile.yangkeduo.com/orders.html",
+            "https://mobile.pinduoduo.com/orders.html",
+            "https://mobile.pinduoduo.com/"
+        ].compactMap { URL(string: $0) }
 
-        let capture = try await WebOrderFetcher.shared.capture(url: url)
+        guard !candidates.isEmpty else { throw FetchError.badURL }
+
+        let capture = try await WebOrderFetcher.shared.capture(urls: candidates, cookieHeader: cookie)
 
         var info = CaptureInfo()
         info.textChars = capture.text.count
         info.payloadChars = capture.payloadJSON.count
         info.pageTitle = capture.title
+        info.attempts = capture.tried
         info.snippet = String(capture.text.prefix(200))
             .replacingOccurrences(of: "\n", with: " ⏎ ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -110,9 +117,13 @@ enum OrderClient {
 
         // 抓不到东西时，试三种 UA 直接请求一次，看看服务端渲染路线有没有可能
         if info.entryCount < 3 || info.textChars < 600 {
-            info.uaProbe = await probeUserAgents(cookie: cookie, url: url)
+            info.uaProbe = await probeUserAgents(cookie: cookie, url: candidates[0])
         }
         lastCapture = info
+
+        if capture.landedOnLogin {
+            throw FetchError.note("拼多多的登录态失效了（页面跳到了登录页）。请点「重新登录」，登录完再刷新订单。")
+        }
 
         let orders = PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON)
 

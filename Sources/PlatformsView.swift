@@ -73,6 +73,11 @@ struct PlatformsView: View {
                         Spacer()
                         Text("\(capture.textChars) / \(capture.payloadChars)").foregroundStyle(.secondary)
                     }
+                    ForEach(capture.attempts, id: \.self) { row in
+                        Text(row)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     ForEach(capture.entrySizes, id: \.self) { row in
                         Text(row)
                             .font(.caption2.monospaced())
