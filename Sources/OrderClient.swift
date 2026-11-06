@@ -26,7 +26,19 @@ enum FetchError: LocalizedError {
     }
 }
 
+/// 上一次抓包的诊断信息，给「平台」页显示，方便截图定位问题
+struct CaptureInfo {
+    var entryCount = 0
+    var textChars = 0
+    var payloadChars = 0
+    var urls: [String] = []
+    var largestBody = ""
+    var writeError = ""
+}
+
 enum OrderClient {
+    static var lastCapture = CaptureInfo()
+
     static func rawDirectory() -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
@@ -63,41 +75,70 @@ enum OrderClient {
 
         let capture = try await WebOrderFetcher.shared.capture(url: url)
 
-        try? capture.text.data(using: .utf8)?.write(to: pageFile(for: .pdd))
-        try? capture.payloadJSON.data(using: .utf8)?.write(to: payloadFile(for: .pdd))
+        var info = CaptureInfo()
+        info.textChars = capture.text.count
+        info.payloadChars = capture.payloadJSON.count
+
+        let pageErr = write(capture.text, to: pageFile(for: .pdd))
+        let payloadErr = write(capture.payloadJSON, to: payloadFile(for: .pdd))
+        info.writeError = [pageErr, payloadErr].compactMap { $0 }.joined(separator: " / ")
+
+        if let data = capture.payloadJSON.data(using: .utf8),
+           let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            info.entryCount = entries.count
+            var largest = ""
+            for entry in entries {
+                let path = urlPath(entry["u"] as? String ?? "")
+                if !path.isEmpty, !info.urls.contains(path) { info.urls.append(path) }
+                if let body = entry["b"] as? String, body.count > largest.count { largest = body }
+            }
+            info.urls = Array(info.urls.prefix(8))
+            info.largestBody = largest
+        }
+        lastCapture = info
 
         let orders = PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON)
 
-        let textBytes = capture.text.utf8.count
-        let payloadBytes = capture.payloadJSON.utf8.count
-
-        let note: String
-        if orders.isEmpty {
-            note = "页面文本 \(textBytes) 字节、接口数据 \(payloadBytes) 字节，但没解析出订单"
-        } else {
-            note = "解析出 \(orders.count) 条订单"
-        }
+        var note = info.entryCount > 0
+            ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单"
+            : "没抓到接口响应，页面文本 \(info.textChars) 字"
+        if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
 
         return FetchOutcome(
             orders: orders,
             httpStatus: 200,
-            byteCount: textBytes + payloadBytes,
-            rawFileURL: pageFile(for: .pdd),
+            byteCount: info.textChars + info.payloadChars,
+            rawFileURL: payloadFile(for: .pdd),
             note: note
         )
     }
 
-    /// 调试用的可分享文件
-    static func debugFiles(for platform: Platform) -> [DebugFile] {
-        var items: [DebugFile] = [
-            DebugFile(id: "page-\(platform.rawValue)", label: "\(platform.name) · 页面文本", url: pageFile(for: platform)),
-            DebugFile(id: "payload-\(platform.rawValue)", label: "\(platform.name) · 接口数据", url: payloadFile(for: platform))
-        ]
-        let legacy = latestRawFile(for: platform)
-        if FileManager.default.fileExists(atPath: legacy.path) {
-            items.append(DebugFile(id: "raw-\(platform.rawValue)", label: "\(platform.name) · 旧版原始页面", url: legacy))
+    private static func write(_ text: String, to url: URL) -> String? {
+        // JS 字符串里可能带孤立代理项，utf8 编码会直接返回 nil，退回 utf16
+        let data = text.data(using: .utf8) ?? text.data(using: .utf16)
+        guard let data else { return "编码失败" }
+        do {
+            try data.write(to: url, options: .atomic)
+            return nil
+        } catch {
+            return error.localizedDescription
         }
-        return items.filter { FileManager.default.fileExists(atPath: $0.url.path) }
+    }
+
+    private static func urlPath(_ raw: String) -> String {
+        guard let url = URL(string: raw) else { return String(raw.prefix(80)) }
+        let path = url.path
+        if path.isEmpty { return url.host ?? "" }
+        return "\(url.host ?? "")\(path)"
+    }
+
+    /// 调试用的可分享文件（不存在的也列出来，由界面显示「未生成」）
+    static func debugFiles(for platform: Platform) -> [DebugFile] {
+        [
+            DebugFile(id: "page-\(platform.rawValue)", label: "\(platform.name) · 页面文本", url: pageFile(for: platform)),
+            DebugFile(id: "payload-\(platform.rawValue)", label: "\(platform.name) · 接口数据", url: payloadFile(for: platform)),
+            DebugFile(id: "raw-\(platform.rawValue)", label: "\(platform.name) · 旧版原始页面", url: latestRawFile(for: platform))
+        ]
     }
 }
 

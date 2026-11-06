@@ -1,7 +1,10 @@
 import SwiftUI
+import UIKit
 
 struct PlatformsView: View {
     @EnvironmentObject private var app: AppState
+
+    private var capture: CaptureInfo { OrderClient.lastCapture }
 
     var body: some View {
         NavigationStack {
@@ -19,14 +22,8 @@ struct PlatformsView: View {
                 Section {
                     ForEach(Platform.allCases) { platform in
                         let files = OrderClient.debugFiles(for: platform)
-                        if files.isEmpty {
-                            HStack {
-                                Text("\(platform.name) 抓取文件")
-                                Spacer()
-                                Text("未生成").foregroundStyle(.secondary)
-                            }
-                        } else {
-                            ForEach(files) { file in
+                        ForEach(files) { file in
+                            if FileManager.default.fileExists(atPath: file.url.path) {
                                 ShareLink(item: file.url) {
                                     HStack {
                                         Text(file.label)
@@ -34,6 +31,12 @@ struct PlatformsView: View {
                                         Text(Self.fileSizeText(file.url))
                                             .foregroundStyle(.secondary)
                                     }
+                                }
+                            } else {
+                                HStack {
+                                    Text(file.label)
+                                    Spacer()
+                                    Text("未生成").foregroundStyle(.secondary)
                                 }
                             }
                         }
@@ -49,7 +52,40 @@ struct PlatformsView: View {
                 } header: {
                     Text("调试 · 抓取文件")
                 } footer: {
-                    Text("点任意一行即可把文件分享出去（微信 → 文件传输助手）。「接口数据」最有用，解析不准时把它发我。")
+                    Text("点有大小的一行即可分享出去（微信 → 文件传输助手）。")
+                }
+
+                Section {
+                    HStack {
+                        Text("接口响应条数")
+                        Spacer()
+                        Text("\(capture.entryCount)").foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("页面文本 / 接口字数")
+                        Spacer()
+                        Text("\(capture.textChars) / \(capture.payloadChars)").foregroundStyle(.secondary)
+                    }
+                    ForEach(capture.urls, id: \.self) { path in
+                        Text(path)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("复制最大一条响应（前 6000 字）") {
+                        UIPasteboard.general.string = String(capture.largestBody.prefix(6000))
+                        app.show("已复制 \(min(capture.largestBody.count, 6000)) 字到剪贴板，去微信粘贴")
+                    }
+                    .disabled(capture.largestBody.isEmpty)
+
+                    if !capture.writeError.isEmpty {
+                        Text("写入错误：\(capture.writeError)")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("抓包摘要")
+                } footer: {
+                    Text("文件显示「未生成」时，先点「复制最大一条响应」，把文字粘贴到微信发我。")
                 }
 
                 Section("最近一次结果") {
