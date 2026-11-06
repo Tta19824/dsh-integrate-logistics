@@ -9,8 +9,15 @@ permissions:
   contents: write
 
 jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 探针（验证非 macOS 机器是否正常）
+        run: echo "ci-probe ok"
+
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
 
     steps:
