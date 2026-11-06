@@ -32,8 +32,12 @@ struct CaptureInfo {
     var textChars = 0
     var payloadChars = 0
     var urls: [String] = []
+    var entrySizes: [String] = []
     var largestBody = ""
     var writeError = ""
+    var pageTitle = ""
+    var snippet = ""
+    var uaProbe: [String] = []
 }
 
 enum OrderClient {
@@ -78,6 +82,10 @@ enum OrderClient {
         var info = CaptureInfo()
         info.textChars = capture.text.count
         info.payloadChars = capture.payloadJSON.count
+        info.pageTitle = capture.title
+        info.snippet = String(capture.text.prefix(200))
+            .replacingOccurrences(of: "\n", with: " ⏎ ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
         let pageErr = write(capture.text, to: pageFile(for: .pdd))
         let payloadErr = write(capture.payloadJSON, to: payloadFile(for: .pdd))
@@ -89,11 +97,20 @@ enum OrderClient {
             var largest = ""
             for entry in entries {
                 let path = urlPath(entry["u"] as? String ?? "")
+                let body = entry["b"] as? String ?? ""
                 if !path.isEmpty, !info.urls.contains(path) { info.urls.append(path) }
-                if let body = entry["b"] as? String, body.count > largest.count { largest = body }
+                if !path.isEmpty, info.entrySizes.count < 8 {
+                    info.entrySizes.append("\(shortPath(path)) · \(body.count / 1024) KB")
+                }
+                if body.count > largest.count { largest = body }
             }
             info.urls = Array(info.urls.prefix(8))
             info.largestBody = largest
+        }
+
+        // 抓不到东西时，试三种 UA 直接请求一次，看看服务端渲染路线有没有可能
+        if info.entryCount < 3 || info.textChars < 600 {
+            info.uaProbe = await probeUserAgents(cookie: cookie, url: url)
         }
         lastCapture = info
 
@@ -102,6 +119,7 @@ enum OrderClient {
         var note = info.entryCount > 0
             ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单"
             : "没抓到接口响应，页面文本 \(info.textChars) 字"
+        if orders.isEmpty, !info.snippet.isEmpty { note += "；页面开头：\(info.snippet.prefix(60))" }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
 
         return FetchOutcome(
@@ -111,6 +129,38 @@ enum OrderClient {
             rawFileURL: payloadFile(for: .pdd),
             note: note
         )
+    }
+
+    /// 直接请求同一个订单页，换三种 UA，看谁能让服务端直接吐出订单
+    private static func probeUserAgents(cookie: String, url: URL) async -> [String] {
+        let uas: [(String, String)] = [
+            ("Safari", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"),
+            ("微信", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.49(0x18003133) NetType/WIFI Language/zh_CN"),
+            ("拼多多App", "Pinduoduo/6.90.0 (iPhone; iOS 17.0; Scale/3.00)")
+        ]
+        var out: [String] = []
+        for (name, ua) in uas {
+            var req = URLRequest(url: url)
+            req.timeoutInterval = 12
+            req.setValue(ua, forHTTPHeaderField: "User-Agent")
+            req.setValue(cookie, forHTTPHeaderField: "Cookie")
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                let body = String(data: data, encoding: .utf8) ?? ""
+                let hits = body.components(separatedBy: "订单号").count - 1
+                out.append("\(name)：HTTP \(code)，\(data.count / 1024) KB，订单号 ×\(hits)")
+            } catch {
+                out.append("\(name)：请求失败")
+            }
+        }
+        return out
+    }
+
+    private static func shortPath(_ path: String) -> String {
+        var s = path
+        if s.count > 46 { s = "…" + String(s.suffix(44)) }
+        return s
     }
 
     private static func write(_ text: String, to url: URL) -> String? {

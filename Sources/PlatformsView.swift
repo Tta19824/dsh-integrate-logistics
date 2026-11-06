@@ -56,6 +56,13 @@ struct PlatformsView: View {
                 }
 
                 Section {
+                    if !capture.pageTitle.isEmpty {
+                        HStack {
+                            Text("页面标题")
+                            Spacer()
+                            Text(capture.pageTitle).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
                     HStack {
                         Text("接口响应条数")
                         Spacer()
@@ -66,10 +73,16 @@ struct PlatformsView: View {
                         Spacer()
                         Text("\(capture.textChars) / \(capture.payloadChars)").foregroundStyle(.secondary)
                     }
-                    ForEach(capture.urls, id: \.self) { path in
-                        Text(path)
+                    ForEach(capture.entrySizes, id: \.self) { row in
+                        Text(row)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                    if !capture.snippet.isEmpty {
+                        Text(capture.snippet)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                            .lineLimit(3)
                     }
                     Button("复制最大一条响应（前 6000 字）") {
                         UIPasteboard.general.string = String(capture.largestBody.prefix(6000))
@@ -86,6 +99,18 @@ struct PlatformsView: View {
                     Text("抓包摘要")
                 } footer: {
                     Text("文件显示「未生成」时，先点「复制最大一条响应」，把文字粘贴到微信发我。")
+                }
+
+                if !capture.uaProbe.isEmpty {
+                    Section {
+                        ForEach(capture.uaProbe, id: \.self) { row in
+                            Text(row).font(.caption2)
+                        }
+                    } header: {
+                        Text("换 UA 直接请求的结果")
+                    } footer: {
+                        Text("这里「订单号 ×N」大于 0 的那种 UA，说明服务端会直接给数据，就不用绕 WebView 了。")
+                    }
                 }
 
                 Section("最近一次结果") {

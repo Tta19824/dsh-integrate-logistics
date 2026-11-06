@@ -132,8 +132,9 @@ enum PinduoduoParser {
             "total_amount", "totalAmount", "amount"
         ]) ?? ""
         if let cents = dict["pay_amount_cent"] as? Int, amount.isEmpty {
-            amount = String(format: "%.2f", Double(cents) / 100.0)
+            amount = String(cents)
         }
+        amount = normalizeAmount(amount)
 
         var title = ""
         var shop = firstString(dict, ["mall_name", "mallName", "store_name", "storeName", "shop_name", "shopName"]) ?? ""
@@ -167,6 +168,25 @@ enum PinduoduoParser {
             pickupCode: "",
             updatedAt: now
         )
+    }
+
+    /// 平台接口里的金额基本是「分」，界面上要显示成两位小数的元。
+    /// 已经是小数的原样保留；纯整数的除以 100。
+    private static func normalizeAmount(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespaces)
+        for prefix in ["¥", "￥"] where s.hasPrefix(prefix) {
+            s.removeFirst()
+        }
+        s = s.trimmingCharacters(in: .whitespaces)
+        guard !s.isEmpty else { return "" }
+        if s.contains(".") {
+            if let v = Double(s), v.rounded() != v || s.count <= 8 {
+                return String(format: "%.2f", v)
+            }
+            return s
+        }
+        guard s.allSatisfy({ $0.isNumber }), let cents = Double(s) else { return s }
+        return String(format: "%.2f", cents / 100.0)
     }
 
     private static func normalizeTime(_ raw: String) -> String {

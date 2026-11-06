@@ -54,7 +54,15 @@ final class WebOrderFetcher: NSObject {
         """
     }
 
-    func capture(url: URL, wait seconds: Double = 14) async throws -> Capture {
+    private let statsJS = """
+    JSON.stringify({
+      n: (window.__dshCap || []).length,
+      s: (window.__dshCap || []).reduce(function(a, c){ return a + (c.b ? c.b.length : 0); }, 0),
+      t: (document.body ? document.body.innerText.length : 0)
+    })
+    """
+
+    func capture(url: URL, seconds: Double = 26) async throws -> Capture {
         let cfg = WKWebViewConfiguration()
         cfg.websiteDataStore = .default()
         cfg.allowsInlineMediaPlayback = true
@@ -74,8 +82,13 @@ final class WebOrderFetcher: NSObject {
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
             forHTTPHeaderField: "User-Agent"
         )
-        _ = try await wv.load(request)
-        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+
+        var loaded = try await waitForData(wv: wv, request: request, seconds: seconds)
+
+        // 第一次没东西就重载一次（有时首屏被风控或跳转打断）
+        if !loaded.hasData {
+            loaded = try await waitForData(wv: wv, request: request, seconds: seconds * 0.8)
+        }
 
         let title = (try? await wv.evaluateJavaScript("document.title || ''")) as? String ?? ""
         let text = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? ""
@@ -87,6 +100,30 @@ final class WebOrderFetcher: NSObject {
             text: text,
             payloadJSON: payload
         )
+    }
+
+    private struct Loaded {
+        var hasData: Bool
+    }
+
+    private func waitForData(wv: WKWebView, request: URLRequest, seconds: Double) async throws -> Loaded {
+        _ = try await wv.load(request)
+        let deadline = Date().addingTimeInterval(seconds)
+        var hasData = false
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard let raw = (try? await wv.evaluateJavaScript(statsJS)) as? String,
+                  let data = raw.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            let bytes = (obj["s"] as? Int) ?? 0
+            let chars = (obj["t"] as? Int) ?? 0
+            if bytes > 30_000 || chars > 600 {
+                hasData = true
+                break
+            }
+        }
+        return Loaded(hasData: hasData)
     }
 
     private func attach(_ wv: WKWebView) {
