@@ -16,12 +16,17 @@ struct PlatformsView: View {
                     Text("登录后会打开该平台的网页，完成登录后点右上角「完成」，App 会把登录凭证存进钥匙串。")
                 }
 
-                Section("调试") {
+                Section {
                     ForEach(Platform.allCases) { platform in
                         if FileManager.default.fileExists(atPath: OrderClient.latestRawFile(for: platform).path) {
                             ShareLink(item: OrderClient.latestRawFile(for: platform)) {
-                                Label("分享 \(platform.name) 最近一次的原始页面", systemImage: "doc.text")
-                                    .font(.footnote)
+                                Label("分享 \(platform.name) 原始页面（\(Self.fileSizeText(OrderClient.latestRawFile(for: platform)))）", systemImage: "doc.text")
+                            }
+                        } else {
+                            HStack {
+                                Text("\(platform.name) 原始页面")
+                                Spacer()
+                                Text("未生成").foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -29,8 +34,29 @@ struct PlatformsView: View {
                     Button(role: .destructive) {
                         OrderStore.shared.deleteAll()
                         app.reload()
+                        app.show("已清空本地订单")
                     } label: {
                         Text("清空本地订单")
+                    }
+                } header: {
+                    Text("调试 · 原始页面")
+                } footer: {
+                    Text("抓过一次之后，这里会出现「分享 …原始页面」，点它就能把页面通过微信发出去。")
+                }
+
+                Section("最近一次结果") {
+                    if let message = app.lastMessage {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(message)
+                                .font(.footnote)
+                            if let at = app.lastMessageAt {
+                                Text(at.formatted(date: .omitted, time: .standard))
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    } else {
+                        Text("还没有操作过").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
 
@@ -44,6 +70,14 @@ struct PlatformsView: View {
             }
             .navigationTitle("平台")
         }
+    }
+
+    static func fileSizeText(_ url: URL) -> String {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let bytes = (attrs?[.size] as? Int) ?? 0
+        if bytes >= 1024 * 1024 { return String(format: "%.1f MB", Double(bytes) / 1048576) }
+        if bytes >= 1024 { return "\(bytes / 1024) KB" }
+        return "\(bytes) B"
     }
 }
 
@@ -86,13 +120,13 @@ struct PlatformRow: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(!loggedIn || app.busy != nil)
+                .disabled(app.busy != nil)
 
                 Spacer()
             }
 
             if let time = app.loginTime(platform) {
-                Text("登录于 \(time.formatted(date: .numeric, time: .shortened))")
+                Text("登录于 \(time.formatted(date: .numeric, time: .shortened))，凭证 \(app.cookieSize(platform)) 字节")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

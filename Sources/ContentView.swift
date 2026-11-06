@@ -16,11 +16,23 @@ struct ContentView: View {
             LoginSheet(platform: platform)
                 .environmentObject(app)
         }
-        .alert("提示", isPresented: $app.showToast) {
-            Button("好", role: .cancel) {}
-        } message: {
-            Text(app.toast ?? "")
+        .overlay(alignment: .top) {
+            if let message = app.toast {
+                Text(message)
+                    .font(.footnote)
+                    .multilineTextAlignment(.leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .onTapGesture { app.toast = nil }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(1)
+            }
         }
+        .animation(.easeInOut(duration: 0.22), value: app.toast)
     }
 }
 

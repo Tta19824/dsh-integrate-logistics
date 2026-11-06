@@ -6,7 +6,8 @@ final class AppState: ObservableObject {
     @Published var loginPlatform: Platform?
     @Published var busy: Platform?
     @Published var toast: String?
-    @Published var showToast = false
+    @Published var lastMessage: String?
+    @Published var lastMessageAt: Date?
 
     init() {
         reload()
@@ -24,6 +25,21 @@ final class AppState: ObservableObject {
         CookieStore.savedAt(for: platform)
     }
 
+    func cookieSize(_ platform: Platform) -> Int {
+        CookieStore.load(for: platform)?.count ?? 0
+    }
+
+    /// 顶部横幅提示，6 秒后自动消失；同时留一条「最近一次结果」备查。
+    func show(_ message: String) {
+        lastMessage = message
+        lastMessageAt = Date()
+        toast = message
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            if self?.toast == message { self?.toast = nil }
+        }
+    }
+
     /// 从 WebView 里把 cookie 捞出来存进钥匙串。
     func finishLogin(_ platform: Platform) {
         CookieStore.extractFromWebView(for: platform) { header in
@@ -31,11 +47,10 @@ final class AppState: ObservableObject {
                 if let header, !header.isEmpty {
                     CookieStore.save(header, for: platform)
                     let count = header.split(separator: ";").count
-                    self.toast = "\(platform.name)：已保存 \(count) 个 cookie"
+                    self.show("\(platform.name)：已保存 \(count) 个 cookie（\(header.count) 字节）")
                 } else {
-                    self.toast = "\(platform.name)：没读到 cookie，可能还没登录成功"
+                    self.show("\(platform.name)：没读到 cookie，可能还没登录成功")
                 }
-                self.showToast = true
                 self.reload()
             }
         }
@@ -55,35 +70,36 @@ final class AppState: ObservableObject {
                 OrderStore.shared.upsert(outcome.orders)
                 reload()
                 busy = nil
-                toast = "\(platform.name)：\(outcome.note)"
+                show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)")
             } catch {
                 busy = nil
-                toast = "\(platform.name)：\(error.localizedDescription)"
+                show("\(platform.name)：\(error.localizedDescription)")
             }
-            showToast = true
         }
     }
 
     func refreshAll() {
         let platforms = Platform.allCases.filter { isLoggedIn($0) }
         guard !platforms.isEmpty else {
-            toast = "还没有登录任何平台，先去「平台」页登录"
-            showToast = true
+            show("还没有登录任何平台，先去「平台」页登录")
             return
         }
         guard busy == nil else { return }
         Task {
+            var lines: [String] = []
             for platform in platforms {
                 busy = platform
                 do {
                     let outcome = try await OrderClient.fetch(platform: platform)
                     OrderStore.shared.upsert(outcome.orders)
+                    lines.append("\(platform.name)：\(outcome.note)")
                 } catch {
-                    NSLog("[refresh] \(platform.name) failed: \(error.localizedDescription)")
+                    lines.append("\(platform.name)：\(error.localizedDescription)")
                 }
             }
             reload()
             busy = nil
+            show(lines.joined(separator: "；"))
         }
     }
 }

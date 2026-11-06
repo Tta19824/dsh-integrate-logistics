@@ -64,14 +64,18 @@ enum OrderClient {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+        // 无论成功与否都先把原始响应落盘，方便排查（403/风控页也有用）
+        let file = latestRawFile(for: .pdd)
+        if !data.isEmpty {
+            try? data.write(to: file)
+        }
+
         guard status == 200 else { throw FetchError.http(status) }
         guard !data.isEmpty else { throw FetchError.emptyBody }
 
-        let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf8) ?? ""
+        let html = String(data: data, encoding: .utf8) ?? ""
         let orders = PinduoduoParser.parse(html: html)
-
-        let file = latestRawFile(for: .pdd)
-        try? data.write(to: file)
 
         let note: String
         if orders.isEmpty {
