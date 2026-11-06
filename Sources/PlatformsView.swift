@@ -18,15 +18,23 @@ struct PlatformsView: View {
 
                 Section {
                     ForEach(Platform.allCases) { platform in
-                        if FileManager.default.fileExists(atPath: OrderClient.latestRawFile(for: platform).path) {
-                            ShareLink(item: OrderClient.latestRawFile(for: platform)) {
-                                Label("分享 \(platform.name) 原始页面（\(Self.fileSizeText(OrderClient.latestRawFile(for: platform)))）", systemImage: "doc.text")
-                            }
-                        } else {
+                        let files = OrderClient.debugFiles(for: platform)
+                        if files.isEmpty {
                             HStack {
-                                Text("\(platform.name) 原始页面")
+                                Text("\(platform.name) 抓取文件")
                                 Spacer()
                                 Text("未生成").foregroundStyle(.secondary)
+                            }
+                        } else {
+                            ForEach(files) { file in
+                                ShareLink(item: file.url) {
+                                    HStack {
+                                        Text(file.label)
+                                        Spacer()
+                                        Text(Self.fileSizeText(file.url))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
                             }
                         }
                     }
@@ -39,9 +47,9 @@ struct PlatformsView: View {
                         Text("清空本地订单")
                     }
                 } header: {
-                    Text("调试 · 原始页面")
+                    Text("调试 · 抓取文件")
                 } footer: {
-                    Text("抓过一次之后，这里会出现「分享 …原始页面」，点它就能把页面通过微信发出去。")
+                    Text("点任意一行即可把文件分享出去（微信 → 文件传输助手）。「接口数据」最有用，解析不准时把它发我。")
                 }
 
                 Section("最近一次结果") {

@@ -19,12 +19,6 @@ enum HTMLTools {
         return s
     }
 
-    static func ranges(of pattern: String, in text: String) -> [NSRange] {
-        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [] }
-        let ns = text as NSString
-        return re.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length)).map { $0.range }
-    }
-
     static func firstMatch(_ pattern: String, in text: String) -> String? {
         guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
         let ns = text as NSString
@@ -36,99 +30,215 @@ enum HTMLTools {
         return ns.substring(with: m.range)
     }
 
-    static func slice(_ text: String, center: Int, before: Int, after: Int) -> String {
+    static func allMatches(_ pattern: String, in text: String) -> [String] {
+        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [] }
         let ns = text as NSString
-        let start = max(0, center - before)
-        let end = min(ns.length, center + after)
-        guard start < end else { return "" }
-        return ns.substring(with: NSRange(location: start, length: end - start))
+        return re.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length)).map { m in
+            m.numberOfRanges > 1 ? ns.substring(with: m.range(at: 1)) : ns.substring(with: m.range)
+        }
     }
 }
 
-/// 拼多多订单页是一堆服务端渲染的 HTML，结构随时会变。
-/// 这里不写死选择器，而是围绕「订单号」定位，再在前后窗口里找商品名 / 状态 / 金额。
+/// 稳定的字符串哈希（Swift 的 hashValue 每次启动都变，不能拿来做订单主键）
+func stableHash(_ text: String) -> String {
+    var hash: UInt64 = 5381
+    for byte in text.utf8 {
+        hash = (hash &* 33) &+ UInt64(byte)
+    }
+    return String(hash, radix: 16)
+}
+
+/// 拼多多订单页是前端渲染的空壳，HTML 里没有订单数据。
+/// 所以解析分两路：优先吃 WebView 抓到的接口 JSON，退而求其次吃渲染后的纯文本。
 enum PinduoduoParser {
-    private static let statusWords = [
+    static let statusWords = [
         "待发货", "待收货", "待付款", "已完成", "已取消", "已签收",
-        "交易成功", "交易关闭", "退款中", "待成团", "拼单成功", "待评价"
+        "交易成功", "交易关闭", "退款中", "待成团", "拼单成功", "待评价",
+        "待取件", "运输中", "派送中", "已发货"
     ]
 
+    // MARK: 入口
+
+    static func parse(text: String, payloadJSON: String, now: Date = Date()) -> [Order] {
+        let fromJSON = parsePayload(payloadJSON, now: now)
+        if !fromJSON.isEmpty { return fromJSON }
+        return parseText(text, now: now)
+    }
+
     static func parse(html: String, now: Date = Date()) -> [Order] {
-        let text = HTMLTools.strip(html)
-        let anchors = orderAnchors(in: html, plainText: text)
+        parseText(HTMLTools.strip(html), now: now)
+    }
+
+    // MARK: 接口 JSON
+
+    static func parsePayload(_ jsonText: String, now: Date = Date()) -> [Order] {
+        guard let data = jsonText.data(using: .utf8),
+              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return [] }
+
+        var dicts: [[String: Any]] = []
+        for entry in entries {
+            guard let body = entry["b"] as? String,
+                  let bodyData = body.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: bodyData)
+            else { continue }
+            collectOrderDicts(obj, into: &dicts)
+        }
+
         var orders: [Order] = []
         var seen = Set<String>()
-
-        for anchor in anchors {
-            guard !seen.contains(anchor.orderNo) else { continue }
-            seen.insert(anchor.orderNo)
-
-            let window = HTMLTools.slice(text, center: anchor.plainIndex, before: 600, after: 900)
-            let statusRaw = statusWords.first { window.contains($0) } ?? ""
-            let amount = HTMLTools.firstMatch("(?:¥|￥|实付|实收款)\\s*([0-9]+(?:\\.[0-9]{1,2})?)", in: window) ?? ""
-            let title = guessTitle(from: window)
-            let time = HTMLTools.firstMatch("(20[0-9]{2}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}(?::[0-9]{2})?)", in: window) ?? ""
-
-            let order = Order(
-                id: Order.makeID(platform: .pdd, orderNo: anchor.orderNo),
-                platform: .pdd,
-                orderNo: anchor.orderNo,
-                title: title,
-                shopName: "",
-                amount: amount,
-                status: OrderStatus.parse(statusRaw),
-                statusRaw: statusRaw.isEmpty ? "未识别" : statusRaw,
-                orderTime: time,
-                logistics: "",
-                pickupCode: "",
-                updatedAt: now
-            )
+        for dict in dicts {
+            guard let order = makeOrder(from: dict, now: now) else { continue }
+            guard !seen.contains(order.id) else { continue }
+            seen.insert(order.id)
             orders.append(order)
         }
         return orders
     }
 
-    private struct Anchor {
-        let orderNo: String
-        let plainIndex: Int
+    private static func collectOrderDicts(_ obj: Any, into out: inout [[String: Any]]) {
+        if let dict = obj as? [String: Any] {
+            if looksLikeOrder(dict) { out.append(dict) }
+            for (_, value) in dict { collectOrderDicts(value, into: &out) }
+        } else if let arr = obj as? [Any] {
+            for value in arr { collectOrderDicts(value, into: &out) }
+        }
     }
 
-    private static func orderAnchors(in html: String, plainText: String) -> [Anchor] {
-        var anchors: [Anchor] = []
+    private static func looksLikeOrder(_ dict: [String: Any]) -> Bool {
+        let keys = Set(dict.keys)
+        let hasNo = !keys.isDisjoint(with: ["order_sn", "orderSn", "order_sn_str", "orderSnStr", "order_no", "orderNo"])
+        let hasBody = !keys.isDisjoint(with: [
+            "goods", "goods_list", "goodsList", "order_goods_list", "orderGoodsList", "items",
+            "order_status", "orderStatus", "order_status_desc", "orderStatusDesc", "status_desc",
+            "order_amount", "orderAmount", "pay_amount", "payAmount"
+        ])
+        return hasNo && hasBody
+    }
 
-        // 形如：订单号：240101-123456789012345
-        let patterns = [
-            "订单号[：: ]*([0-9\\-]{8,})",
-            "订单编号[：: ]*([0-9\\-]{8,})",
-            "\"orderSn\"\\s*:\\s*\"([0-9\\-]{8,})\"",
-            "\"order_sn\"\\s*:\\s*\"([0-9\\-]{8,})\""
-        ]
-        let ns = plainText as NSString
-        for pattern in patterns {
-            guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
-            let matches = re.matches(in: plainText, options: [], range: NSRange(location: 0, length: ns.length))
-            for m in matches {
-                let r = m.numberOfRanges > 1 ? m.range(at: 1) : m.range
-                guard r.location != NSNotFound else { continue }
-                let orderNo = ns.substring(with: r)
-                anchors.append(Anchor(orderNo: orderNo, plainIndex: m.range.location))
+    private static func makeOrder(from dict: [String: Any], now: Date) -> Order? {
+        let orderNo = firstString(dict, [
+            "order_sn", "orderSn", "order_sn_str", "orderSnStr", "order_no", "orderNo"
+        ]) ?? ""
+        guard orderNo.count >= 8 else { return nil }
+
+        let statusRaw = firstString(dict, [
+            "order_status_desc", "orderStatusDesc", "status_desc", "statusDesc",
+            "order_status_str", "status_str", "status_text", "statusText", "status_name"
+        ]) ?? firstString(dict, ["order_status", "orderStatus", "status"]).map { "状态码 \($0)" } ?? ""
+
+        var amount = firstString(dict, [
+            "order_amount", "orderAmount", "pay_amount", "payAmount",
+            "total_amount", "totalAmount", "amount"
+        ]) ?? ""
+        if let cents = dict["pay_amount_cent"] as? Int, amount.isEmpty {
+            amount = String(format: "%.2f", Double(cents) / 100.0)
+        }
+
+        var title = ""
+        var shop = firstString(dict, ["mall_name", "mallName", "store_name", "storeName", "shop_name", "shopName"]) ?? ""
+        for key in ["goods", "goods_list", "goodsList", "order_goods_list", "orderGoodsList", "items", "goods_info"] {
+            guard let arr = dict[key] as? [[String: Any]], let first = arr.first else { continue }
+            title = firstString(first, ["goods_name", "goodsName", "goods_title", "goodsTitle", "title", "name"]) ?? ""
+            if shop.isEmpty {
+                shop = firstString(first, ["mall_name", "mallName", "store_name"]) ?? ""
+            }
+            if amount.isEmpty {
+                amount = firstString(first, ["goods_price", "goodsPrice", "price"]) ?? ""
+            }
+            if !title.isEmpty { break }
+        }
+
+        let time = firstString(dict, [
+            "create_time", "createTime", "order_time", "orderTime", "order_create_time", "orderCreateTime"
+        ]) ?? ""
+
+        return Order(
+            id: Order.makeID(platform: .pdd, orderNo: orderNo),
+            platform: .pdd,
+            orderNo: orderNo,
+            title: title,
+            shopName: shop,
+            amount: amount,
+            status: OrderStatus.parse(statusRaw),
+            statusRaw: statusRaw.isEmpty ? "未识别" : statusRaw,
+            orderTime: normalizeTime(time),
+            logistics: "",
+            pickupCode: "",
+            updatedAt: now
+        )
+    }
+
+    private static func normalizeTime(_ raw: String) -> String {
+        guard !raw.isEmpty else { return "" }
+        if raw.count >= 10, raw.first.map({ $0.isNumber }) == true, !raw.contains("-") {
+            if let seconds = Double(raw) {
+                let date = Date(timeIntervalSince1970: seconds > 1_000_000_000_000 ? seconds / 1000 : seconds)
+                return date.formatted(date: .numeric, time: .shortened)
             }
         }
-        return anchors.sorted { $0.plainIndex < $1.plainIndex }
+        return raw
     }
 
-    private static func guessTitle(from window: String) -> String {
-        let lines = window
+    private static func firstString(_ dict: [String: Any], _ keys: [String]) -> String? {
+        for key in keys {
+            if let s = dict[key] as? String, !s.isEmpty, s != "0" { return s }
+            if let n = dict[key] as? NSNumber { return n.stringValue }
+        }
+        return nil
+    }
+
+    // MARK: 渲染后纯文本
+
+    static func parseText(_ text: String, now: Date = Date()) -> [Order] {
+        let lines = text
             .split(separator: "\n", omittingEmptySubsequences: true)
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { $0.count >= 6 }
+            .filter { !$0.isEmpty }
 
-        let banned = ["订单号", "订单编号", "实付", "合计", "运费", "优惠", "查看物流", "确认收货", "再次购买"]
-        for line in lines {
+        var orders: [Order] = []
+        var seen = Set<String>()
+
+        for (index, line) in lines.enumerated() {
+            guard line.count <= 14, let status = statusWords.first(where: { line.contains($0) }) else { continue }
+            let lower = max(0, index - 5)
+            let window = Array(lines[lower...index])
+            guard let title = guessTitle(from: window) else { continue }
+            let amount = window.compactMap { HTMLTools.firstMatch("(?:¥|￥)\\s*([0-9]+(?:\\.[0-9]{1,2})?)", in: $0) }.first ?? ""
+            let key = "\(title)|\(amount)|\(status)"
+            let orderNo = "T" + stableHash(key).uppercased()
+            let id = Order.makeID(platform: .pdd, orderNo: orderNo)
+            guard !seen.contains(id) else { continue }
+            seen.insert(id)
+
+            orders.append(Order(
+                id: id,
+                platform: .pdd,
+                orderNo: orderNo,
+                title: title,
+                shopName: "",
+                amount: amount,
+                status: OrderStatus.parse(status),
+                statusRaw: status,
+                orderTime: "",
+                logistics: "",
+                pickupCode: "",
+                updatedAt: now
+            ))
+        }
+        return orders
+    }
+
+    private static func guessTitle(from window: [String]) -> String? {
+        let banned = ["订单号", "订单编号", "实付", "合计", "运费", "优惠", "查看物流",
+                      "确认收货", "再次购买", "申请售后", "评价", "删除", "更多", "全部"]
+        for line in window.reversed() {
+            guard line.count >= 6 else { continue }
             if banned.contains(where: { line.contains($0) }) { continue }
-            if line.allSatisfy({ $0.isNumber || $0 == "-" || $0 == ":" }) { continue }
+            if line.allSatisfy({ $0.isNumber || "-:：¥￥. ".contains($0) }) { continue }
+            if statusWords.contains(where: { line.contains($0) }) && line.count < 8 { continue }
             return String(line.prefix(60))
         }
-        return ""
+        return nil
     }
 }
