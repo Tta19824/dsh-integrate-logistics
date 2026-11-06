@@ -1,0 +1,74 @@
+name: build-ipa
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 环境信息
+        run: |
+          xcodebuild -version || true
+          ls /Applications | grep -i xcode || true
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate
+
+      - name: 编译（不签名）
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project OrderPocket.xcodeproj \
+            -scheme OrderPocket \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: 打包成 ipa
+        run: |
+          set -euo pipefail
+          APP_PATH="build/Build/Products/Release-iphoneos/OrderPocket.app"
+          test -d "$APP_PATH"
+          rm -rf Payload OrderPocket.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry OrderPocket.ipa Payload
+          echo "--- ipa 大小 ---"
+          ls -lh OrderPocket.ipa
+          echo "--- 二进制架构 ---"
+          lipo -info Payload/OrderPocket.app/OrderPocket || true
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrderPocket-ipa
+          path: OrderPocket.ipa
+          retention-days: 30
+
+      - name: 发布到 Release（方便手机直接下载）
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: smoke
+          name: 冒烟测试包
+          body: 只用于验证签名、安装、运行链路。
+          files: OrderPocket.ipa
