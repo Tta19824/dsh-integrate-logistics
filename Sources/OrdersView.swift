@@ -225,6 +225,7 @@ struct LogisticsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var events: [ShipEvent] = []
     @State private var coordinates: [CLLocationCoordinate2D] = []
+    @State private var path: [CLLocationCoordinate2D] = []
     @State private var loading = true
     @State private var message = ""
 
@@ -233,12 +234,16 @@ struct LogisticsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if !coordinates.isEmpty {
-                        RouteMapView(coordinates: coordinates)
+                        RouteMapView(path: path, truck: coordinates.last, caption: events.first?.desc ?? "当前位置")
                             .frame(height: 230)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .padding(.horizontal, 16)
                             .padding(.top, 12)
                     }
+
+                    orderNoRow
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
 
                     if loading {
                         HStack(spacing: 8) {
@@ -300,6 +305,30 @@ struct LogisticsSheet: View {
         }
     }
 
+    private var orderNoRow: some View {
+        HStack(spacing: 8) {
+            Text("订单号")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(order.orderNo)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+            Spacer(minLength: 8)
+            Button {
+                UIPasteboard.general.string = order.orderNo
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
     private func load() async {
         guard let cookie = await CookieStore.currentHeader(for: .pdd), !cookie.isEmpty else {
             message = "还没登录拼多多，先去「平台」页登录"
@@ -325,6 +354,10 @@ struct LogisticsSheet: View {
             let names = ShipTracking.placeNames(in: events)
             if !names.isEmpty {
                 coordinates = await ShipTracking.coordinates(for: names)
+                if !coordinates.isEmpty {
+                    loading = false
+                    path = await RoutePlanner.path(through: coordinates)
+                }
             }
         }
         loading = false

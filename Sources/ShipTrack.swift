@@ -98,55 +98,114 @@ enum ShipTracking {
     }
 }
 
+enum RoutePlanner {
+    /// 把几个城市点连成一条「沿公路走」的线：相邻两点向 Apple 地图要驾车路线，
+    /// 把每一段的折线拼起来。要不到路线就退回直线。
+    static func path(through points: [CLLocationCoordinate2D]) async -> [CLLocationCoordinate2D] {
+        guard points.count > 1 else { return points }
+        var result: [CLLocationCoordinate2D] = []
+        for index in 0..<(points.count - 1) {
+            let from = points[index]
+            let to = points[index + 1]
+            if let leg = await drivingPath(from: from, to: to) {
+                if result.isEmpty { result.append(from) }
+                result.append(contentsOf: leg)
+            } else {
+                if result.isEmpty { result.append(from) }
+                result.append(to)
+            }
+        }
+        if result.isEmpty { return points }
+        return result
+    }
+
+    private static func drivingPath(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) async -> [CLLocationCoordinate2D]? {
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: MKPlacemark(coordinate: from))
+        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: to))
+        request.transportType = .automobile
+        guard let response = try? await MKDirections(request: request).calculate() else { return nil }
+        guard let route = response.routes.min(by: { $0.distance < $1.distance }) else { return nil }
+        let polyline = route.polyline
+        var coordinates = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: polyline.pointCount)
+        polyline.getCoordinates(&coordinates, range: NSRange(location: 0, length: polyline.pointCount))
+        return coordinates.filter { CLLocationCoordinate2DIsValid($0) }
+    }
+}
+
 struct RouteMapView: UIViewRepresentable {
-    let coordinates: [CLLocationCoordinate2D]
+    let path: [CLLocationCoordinate2D]
+    let truck: CLLocationCoordinate2D?
+    let caption: String
 
     func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
         map.delegate = context.coordinator
         map.isRotateEnabled = false
         map.pointOfInterestFilter = .excludingAll
+        map.showsCompass = false
         return map
     }
 
     func updateUIView(_ mapView: MKMapView, context: Context) {
-        guard !coordinates.isEmpty else { return }
         mapView.removeOverlays(mapView.overlays)
         mapView.removeAnnotations(mapView.annotations)
-        if coordinates.count > 1 {
-            let line = MKPolyline(coordinates: coordinates, count: coordinates.count)
+
+        guard !path.isEmpty else { return }
+
+        if path.count > 1 {
+            let line = MKPolyline(coordinates: path, count: path.count)
             mapView.addOverlay(line)
             mapView.setVisibleMapRect(
                 line.boundingMapRect,
-                edgePadding: UIEdgeInsets(top: 40, left: 40, bottom: 40, right: 40),
+                edgePadding: UIEdgeInsets(top: 46, left: 34, bottom: 34, right: 34),
                 animated: false
             )
-        } else if let first = coordinates.first {
+        } else if let only = path.first {
             mapView.setRegion(
-                MKCoordinateRegion(center: first, latitudinalMeters: 120000, longitudinalMeters: 120000),
+                MKCoordinateRegion(center: only, latitudinalMeters: 90000, longitudinalMeters: 90000),
                 animated: false
             )
         }
-        for (index, coordinate) in coordinates.enumerated() {
-            let pin = MKPointAnnotation()
-            pin.coordinate = coordinate
-            pin.title = index == coordinates.count - 1 ? "当前位置" : "途经 \(index + 1)"
+
+        if let truck {
+            let pin = TruckAnnotation()
+            pin.coordinate = truck
+            pin.title = caption
             mapView.addAnnotation(pin)
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(caption: caption) }
+
+    final class TruckAnnotation: MKPointAnnotation {}
 
     final class Coordinator: NSObject, MKMapViewDelegate {
+        let caption: String
+        init(caption: String) { self.caption = caption }
+
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let line = overlay as? MKPolyline {
                 let renderer = MKPolylineRenderer(polyline: line)
                 renderer.strokeColor = UIColor.systemGreen
-                renderer.lineWidth = 4
+                renderer.lineWidth = 5
                 renderer.lineCap = .round
                 return renderer
             }
             return MKOverlayRenderer(overlay: overlay)
+        }
+
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            guard annotation is TruckAnnotation else { return nil }
+            let id = "truck"
+            let view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKMarkerAnnotationView
+                ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: id)
+            view.annotation = annotation
+            view.markerTintColor = .systemGreen
+            view.glyphImage = UIImage(systemName: "truck.box.fill")
+            view.displayPriority = .required
+            view.canShowCallout = true
+            return view
         }
     }
 }
