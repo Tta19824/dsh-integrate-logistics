@@ -141,6 +141,7 @@ enum PinduoduoParser {
 
         var title = ""
         var imageURL = ""
+        var goodsID = ""
         var shop = ""
         if let mall = dict["mall"] as? [String: Any] {
             shop = firstString(mall, ["mall_name", "mallName", "mall_title", "mallTitle", "shop_name", "shopName", "store_name", "storeName"]) ?? ""
@@ -152,6 +153,7 @@ enum PinduoduoParser {
             guard let arr = dict[key] as? [[String: Any]], let first = arr.first else { continue }
             title = firstString(first, ["goods_name", "goodsName", "goods_title", "goodsTitle", "title", "name"]) ?? ""
             imageURL = firstString(first, ["thumb_url", "thumbUrl", "hd_thumb_url", "hdThumbUrl", "image_url", "imageUrl", "goods_image", "goodsImage"]) ?? ""
+            goodsID = firstString(first, ["goods_id", "goodsId"]) ?? ""
             if shop.isEmpty {
                 shop = firstString(first, ["mall_name", "mallName", "store_name"]) ?? ""
             }
@@ -178,6 +180,7 @@ enum PinduoduoParser {
             logistics: "",
             pickupCode: "",
             imageURL: imageURL,
+            goodsID: goodsID,
             updatedAt: now
         )
     }
@@ -355,6 +358,8 @@ enum DetailParser {
         if s.hasPrefix("百亿补贴") || s.hasPrefix("品牌馆") { return false }
         return ["专营店", "专卖店", "旗舰店", "官方店", "企业店"].contains { s.contains($0) }
     }
+
+    static func isLikelyShop(_ raw: String) -> Bool { looksLikeShop(raw) }
 
     /// 取件码，例如「取件码：8-2-1234」
     static func pickupCode(from text: String) -> String {

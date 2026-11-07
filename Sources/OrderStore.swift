@@ -38,10 +38,12 @@ final class OrderStore {
             logistics TEXT,
             pickup_code TEXT,
             image_url TEXT,
+            goods_id TEXT,
             updated_at REAL
         );
         """
         sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN image_url TEXT;", nil, nil, nil)
+        sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN goods_id TEXT;", nil, nil, nil)
         if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
             NSLog("[store] create table failed: \(String(cString: sqlite3_errmsg(db)))")
         }
@@ -63,8 +65,8 @@ final class OrderStore {
             sqlite3_exec(db, "BEGIN;", nil, nil, nil)
 
             let sql = """
-            INSERT INTO orders (id, platform, order_no, title, shop, amount, status, status_raw, order_time, logistics, pickup_code, image_url, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO orders (id, platform, order_no, title, shop, amount, status, status_raw, order_time, logistics, pickup_code, image_url, goods_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title,
                 shop=excluded.shop,
@@ -75,6 +77,7 @@ final class OrderStore {
                 logistics=excluded.logistics,
                 pickup_code=excluded.pickup_code,
                 image_url=excluded.image_url,
+                goods_id=excluded.goods_id,
                 updated_at=excluded.updated_at;
             """
             var stmt: OpaquePointer?
@@ -99,7 +102,8 @@ final class OrderStore {
                 bind(stmt, 10, o.logistics)
                 bind(stmt, 11, o.pickupCode)
                 bind(stmt, 12, o.imageURL)
-                sqlite3_bind_double(stmt, 13, o.updatedAt.timeIntervalSince1970)
+                bind(stmt, 13, o.goodsID)
+                sqlite3_bind_double(stmt, 14, o.updatedAt.timeIntervalSince1970)
                 if sqlite3_step(stmt) != SQLITE_DONE {
                     NSLog("[store] step failed: \(String(cString: sqlite3_errmsg(db)))")
                 }
@@ -113,7 +117,7 @@ final class OrderStore {
         queue.sync {
             guard let db else { return [] }
             let sql = """
-            SELECT id, platform, order_no, title, shop, amount, status, status_raw, order_time, logistics, pickup_code, image_url, updated_at
+            SELECT id, platform, order_no, title, shop, amount, status, status_raw, order_time, logistics, pickup_code, image_url, goods_id, updated_at
             FROM orders ORDER BY updated_at DESC;
             """
             var stmt: OpaquePointer?
@@ -136,7 +140,8 @@ final class OrderStore {
                         logistics: text(stmt, 9),
                         pickupCode: text(stmt, 10),
                         imageURL: text(stmt, 11),
-                        updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 12))
+                        goodsID: text(stmt, 12),
+                        updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 13))
                     )
                 )
             }

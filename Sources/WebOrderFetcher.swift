@@ -157,6 +157,14 @@ final class WebOrderFetcher: NSObject {
         return try await capture(urls: [url], cookieHeader: cookieHeader, seconds: 14, clickTabs: false)
     }
 
+    /// 打开商品详情页，用来捞真实店铺名（订单接口里的店铺是品牌馆名）。
+    func captureGoods(goodsID: String, cookieHeader: String) async throws -> Capture {
+        guard let url = URL(string: "https://mobile.pinduoduo.com/goods.html?goods_id=\(goodsID)") else {
+            throw FetchError.badURL
+        }
+        return try await capture(urls: [url], cookieHeader: cookieHeader, seconds: 12, clickTabs: false)
+    }
+
     private func isLoginPage(title: String, text: String) -> Bool {
         if title == "登录" { return true }
         let marks = ["发送验证码", "请输入手机号", "密码登录", "请先登录", "扫码登录", "同意服务协议与隐私政策"]

@@ -375,7 +375,16 @@ struct OrderDetailSheet: View {
             // 详情页的接口数据存一份，方便「平台页 → 调试」里分享出来排查
             let detailURL = OrderClient.detailPayloadFile(for: .pdd)
             try? cap.payloadJSON.data(using: .utf8)?.write(to: detailURL, options: .atomic)
-            let realShop = DetailParser.shopName(payloadJSON: cap.payloadJSON, text: cap.text)
+            var realShop = DetailParser.shopName(payloadJSON: cap.payloadJSON, text: cap.text)
+            // 订单接口里的店铺常常是品牌馆名（「百亿补贴·宝格丽」），真店名要去商品页捞。
+            if !DetailParser.isLikelyShop(realShop), !order.goodsID.isEmpty,
+               let g = try? await WebOrderFetcher.shared.captureGoods(goodsID: order.goodsID, cookieHeader: cookie) {
+                let fromGoods = DetailParser.shopName(payloadJSON: g.payloadJSON, text: g.text)
+                if DetailParser.isLikelyShop(fromGoods) {
+                    realShop = fromGoods
+                    try? g.payloadJSON.data(using: .utf8)?.write(to: OrderClient.detailPayloadFile(for: .pdd), options: .atomic)
+                }
+            }
             shop = realShop.isEmpty ? order.shopName : realShop
             pickup = DetailParser.pickupCode(from: cap.text)
             statusWord = DetailParser.statusWord(from: cap.text)
