@@ -143,9 +143,6 @@ struct OrderRow: View {
                 .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
 
-            Text("订单号 \(order.orderNo)")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 6)
     }

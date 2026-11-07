@@ -113,6 +113,13 @@ final class WebOrderFetcher: NSObject {
                 if isLoginPage(title: title, text: text) { continue }
             }
 
+            // 只关心「待发货 / 待收货」两个标签：点一下让页面去请求对应列表，
+            // 抓到的多个 order_list_v4 响应会在解析时合并。
+            _ = await wv.evaluateJavaScript(self.clickTabJS(["待发货", "打包中"]))
+            await self.sleep(3.5)
+            _ = await wv.evaluateJavaScript(self.clickTabJS(["待收货"]))
+            await self.sleep(4.0)
+
             let payload = (try? await wv.evaluateJavaScript("JSON.stringify(window.__dshCap || [])")) as? String ?? "[]"
             let freshCookie = await CookieStore.currentHeader(for: .pdd) ?? ""
             return Capture(
@@ -157,6 +164,29 @@ final class WebOrderFetcher: NSObject {
 
     /// 把钥匙串里存的 cookie 灌回 WebView，避免 WebView 自己的存储被系统清过。
     /// 注意：WebView 里已经有的同名 cookie 不覆盖——那里的可能比钥匙串里的新。
+    /// 在页面里找到文字完全等于某个标签名的元素并点它。
+    private func clickTabJS(_ names: [String]) -> String {
+        let list = names.map { "\"\($0)\"" }.joined(separator: ",")
+        return """
+        (function(){
+          var names = [\(list)];
+          var els = document.querySelectorAll('div,span,a,li,p');
+          for (var i = 0; i < els.length; i++) {
+            var t = (els[i].innerText || '').trim();
+            if (t.length === 0 || t.length > 8) { continue; }
+            for (var j = 0; j < names.length; j++) {
+              if (t === names[j]) { try { els[i].click(); return names[j]; } catch (e) {} }
+            }
+          }
+          return '';
+        })();
+        """
+    }
+
+    private func sleep(_ seconds: Double) async {
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
+
     private func prefillCookies(_ header: String) async {
         guard !header.isEmpty else { return }
         let store = WKWebsiteDataStore.default().httpCookieStore
