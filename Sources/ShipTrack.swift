@@ -196,6 +196,12 @@ struct RouteMapView: UIViewRepresentable {
     }
 
     func updateUIView(_ mapView: MKMapView, context: Context) {
+        // 尺寸变化（拖拽调整高度）时 SwiftUI 会不停调用这里。
+        // 数据没变就什么都不做，否则每一帧都拆重建覆盖层 + 重置镜头，帧率会掉到个位数。
+        let key = "\(path.count)|\(remaining.count)|\(truck?.latitude ?? 0)|\(truck?.longitude ?? 0)|\(caption)"
+        if context.coordinator.lastKey == key { return }
+        context.coordinator.lastKey = key
+
         mapView.removeOverlays(mapView.overlays)
         mapView.removeAnnotations(mapView.annotations)
         context.coordinator.remainingLine = nil
@@ -244,6 +250,7 @@ struct RouteMapView: UIViewRepresentable {
     final class Coordinator: NSObject, MKMapViewDelegate {
         let caption: String
         var remainingLine: MKPolyline?
+        var lastKey: String?
         init(caption: String) { self.caption = caption }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
