@@ -39,9 +39,13 @@ struct OrdersView: View {
         }
     }
 
+    private var activeOrders: [Order] {
+        app.orders.filter { $0.status == .paid || $0.status == .shipped }
+    }
+
     private var orderList: some View {
         List {
-            ForEach(app.orders) { order in
+            ForEach(activeOrders) { order in
                 OrderRow(order: order)
                     .contentShape(Rectangle())
                     .onTapGesture { selected = order }
@@ -223,10 +227,12 @@ struct OrderDetailSheet: View {
                                     .frame(width: 10)
 
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text(item.time)
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                            .monospacedDigit()
+                                        if !item.time.isEmpty {
+                                            Text(item.time)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .monospacedDigit()
+                                        }
                                         Text(item.text)
                                             .font(index == 0 ? .footnote.weight(.medium) : .footnote)
                                             .foregroundStyle(index == 0 ? Color.primary : Color.secondary)

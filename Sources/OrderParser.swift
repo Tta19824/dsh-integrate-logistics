@@ -229,7 +229,7 @@ enum PinduoduoParser {
         if prompt.contains("取消") || prompt.contains("关闭") { return .cancelled }
         if prompt.contains("退款") || prompt.contains("售后") || prompt.contains("退货") { return .refunding }
         if prompt.contains("待收货") || prompt.contains("运输") || prompt.contains("派送") || prompt.contains("待取件") { return .shipped }
-        if prompt.contains("待发货") || prompt.contains("待成团") { return .paid }
+        if prompt.contains("待发货") || prompt.contains("打包") || prompt.contains("待成团") { return .paid }
         if prompt.contains("待付款") || prompt.contains("待支付") { return .unpaid }
         if prompt.contains("成功") || prompt.contains("到账") || prompt.contains("完成") || prompt.contains("已签收") { return .completed }
         switch code {
@@ -321,7 +321,7 @@ enum DetailParser {
 
     /// 当前物流状态词
     static func statusWord(from text: String) -> String {
-        let words = ["已签收", "派送中", "派件中", "待取件", "运输中", "已发货", "已揽收", "待发货", "待收货"]
+        let words = ["已签收", "派送中", "派件中", "待取件", "运输中", "已发货", "已揽收", "待发货", "打包中", "待收货"]
         for raw in text.components(separatedBy: "\n") {
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.count > 20 { continue }
@@ -339,7 +339,7 @@ enum DetailParser {
 
     /// 物流轨迹：形如「2026-11-07 11:05:16」后面跟一行说明
     static func trace(from text: String) -> [TraceEntry] {
-        guard let re = try? NSRegularExpression(pattern: "\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}") else { return [] }
+        guard let re = try? NSRegularExpression(pattern: "\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}(:\\d{2})?") else { return [] }
         let ns = text as NSString
         let matches = re.matches(in: text, range: NSRange(location: 0, length: ns.length))
         var out: [TraceEntry] = []
@@ -355,6 +355,17 @@ enum DetailParser {
             if desc.isEmpty { continue }
             out.append(TraceEntry(id: out.count, time: time, text: String(desc.prefix(120))))
             if out.count >= 20 { break }
+        }
+        if out.isEmpty {
+            let keys = ["已签收", "派送", "派件", "到达", "离开", "运输中", "揽收", "驿站", "快递柜", "取件", "预计", "发往"]
+            for raw in text.components(separatedBy: "\n") {
+                let line = raw.trimmingCharacters(in: .whitespaces)
+                if line.count < 4 || line.count > 60 { continue }
+                if keys.contains(where: { line.contains($0) }) {
+                    out.append(TraceEntry(id: out.count, time: "", text: line))
+                }
+                if out.count >= 12 { break }
+            }
         }
         return out
     }
