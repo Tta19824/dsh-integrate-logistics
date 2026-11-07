@@ -45,6 +45,7 @@ struct LoginSheet: View {
         NavigationStack {
             WebView(
                 url: platform.loginURL,
+                desktop: platform == .pdd,
                 clearDomains: platform == .pdd ? ["pinduoduo.com", "yangkeduo.com"] : [],
                 autoQR: platform == .pdd
             )

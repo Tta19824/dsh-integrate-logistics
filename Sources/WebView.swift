@@ -38,6 +38,8 @@ struct WebView: UIViewRepresentable {
       }
       function tick(){
         tries++;
+        var direct = document.querySelector('.qrcode-login');
+        if (direct) { try { direct.click(); } catch (e) {} return true; }
         if (byText()) return true;
         if (tries > 6 && byClass()) return true;
         return false;
