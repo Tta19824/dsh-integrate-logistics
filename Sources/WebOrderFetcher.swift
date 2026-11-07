@@ -117,9 +117,9 @@ final class WebOrderFetcher: NSObject {
                 // 只关心「待发货 / 待收货」两个标签：点一下让页面去请求对应列表，
                 // 抓到的多个 order_list_v4 响应会在解析时合并。
                 _ = try? await wv.evaluateJavaScript(self.clickTabJS(["待发货", "打包中"]))
-                await self.sleep(3.5)
+                await self.sleep(2.2)
                 _ = try? await wv.evaluateJavaScript(self.clickTabJS(["待收货"]))
-                await self.sleep(4.0)
+                await self.sleep(2.8)
             }
 
             let payload = (try? await wv.evaluateJavaScript("JSON.stringify(window.__dshCap || [])")) as? String ?? "[]"
