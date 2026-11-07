@@ -139,8 +139,10 @@ struct LoginSheet: View {
                         PHAssetChangeRequest.creationRequestForAsset(from: image)
                     } completionHandler: { ok, _ in
                         DispatchQueue.main.async {
-                            app.toast = ok ? "二维码已存相册，接着打开拼多多扫一扫" : "保存失败"
-                            Self.openPddScan()
+                            app.toast = ok
+                                ? "二维码已存相册 → 拼多多右上角「扫一扫」→「相册」"
+                                : "保存失败"
+                            Self.openPdd()
                         }
                     }
                 }
@@ -171,10 +173,10 @@ struct LoginSheet: View {
         }.resume()
     }
 
-    private static func openPddScan() {
+    private static func openPdd() {
+        // 只打开拼多多本体；深链进扫一扫的地址不可靠（会落在「界面刷新失败」页）
         let candidates = [
-            "pinduoduo://com.xunmeng.pinduoduo/scan",
-            "pinduoduo://com.xunmeng.pinduoduo/qrcode_scan",
+            "pinduoduo://com.xunmeng.pinduoduo",
             "pinduoduo://"
         ]
         openFirst(candidates)
