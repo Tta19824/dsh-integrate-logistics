@@ -60,6 +60,11 @@ enum OrderClient {
         rawDirectory().appendingPathComponent("payload_\(platform.rawValue).json")
     }
 
+    /// 订单列表卡片上的文字（排查取件码用）
+    static func cardsFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("cards_\(platform.rawValue).json")
+    }
+
     /// 订单详情页抓到的接口数据（排查店铺名用）
     static func detailPayloadFile(for platform: Platform) -> URL {
         rawDirectory().appendingPathComponent("payload_detail_\(platform.rawValue).json")
@@ -134,12 +139,14 @@ enum OrderClient {
             throw FetchError.note("拼多多的登录态失效了。点「重新登录」时建议用扫码登录（不会把手机 App 顶下线），登录完再刷新订单。")
         }
 
+        try? capture.cardsJSON.data(using: .utf8)?.write(to: cardsFile(for: .pdd), options: .atomic)
         var orders = attachLogistics(PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON), payloadJSON: capture.payloadJSON)
         // 列表卡片上直接带着取件码 / 最新物流，不用再点进详情页
         orders = PinduoduoParser.applyCards(orders, cardsJSON: capture.cardsJSON)
 
+        let cardCount = (capture.cardsJSON.components(separatedBy: "\"sn\":").count - 1)
         var note = info.entryCount > 0
-            ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单"
+            ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单，卡片 \(cardCount) 张"
             : "没抓到接口响应，页面文本 \(info.textChars) 字"
         if orders.isEmpty, !info.snippet.isEmpty { note += "；页面开头：\(info.snippet.prefix(60))" }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
@@ -246,7 +253,8 @@ enum OrderClient {
             DebugFile(id: "page-\(platform.rawValue)", label: "\(platform.name) · 页面文本", url: pageFile(for: platform)),
             DebugFile(id: "payload-\(platform.rawValue)", label: "\(platform.name) · 接口数据", url: payloadFile(for: platform)),
             DebugFile(id: "raw-\(platform.rawValue)", label: "\(platform.name) · 旧版原始页面", url: latestRawFile(for: platform)),
-            DebugFile(id: "detail-\(platform.rawValue)", label: "\(platform.name) · 详情接口", url: detailPayloadFile(for: platform))
+            DebugFile(id: "detail-\(platform.rawValue)", label: "\(platform.name) · 详情接口", url: detailPayloadFile(for: platform)),
+            DebugFile(id: "cards-\(platform.rawValue)", label: "\(platform.name) · 列表卡片", url: cardsFile(for: platform))
         ]
     }
 }

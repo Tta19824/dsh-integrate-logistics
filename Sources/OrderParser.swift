@@ -200,9 +200,18 @@ enum PinduoduoParser {
             var next = order
             let code = DetailParser.pickupCode(from: text)
             if !code.isEmpty { next.pickupCode = code }
-            if let line = logisticsLine(from: text) { next.logistics = line }
+            if let name = carrierName(from: text) { next.carrier = name }
+            // 已经有取件码的单，卡片上那句「请及时取件」就别再堆一行了
+            if code.isEmpty, let line = logisticsLine(from: text) { next.logistics = line }
             return next
         }
+    }
+
+    /// 快递公司名，比如「顺丰」「中通」「圆通」
+    static func carrierName(from text: String) -> String? {
+        let names = ["顺丰", "中通", "圆通", "韵达", "申通", "极兔", "邮政", "EMS", "德邦", "京东", "百世", "丰网", "菜鸟"]
+        for name in names where text.contains(name) { return name }
+        return nil
     }
 
     private static func snKey(_ raw: String) -> String {

@@ -107,6 +107,7 @@ struct Order: Identifiable, Codable, Equatable {
     var orderTime: String
     var logistics: String
     var pickupCode: String
+    var carrier: String = ""
     var imageURL: String = ""
     var goodsID: String = ""
     var updatedAt: Date

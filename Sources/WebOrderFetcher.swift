@@ -72,15 +72,22 @@ final class WebOrderFetcher: NSObject {
     static let cardsJS = """
     (function(){
       try {
-        var seen = {}, out = [];
+        var out = [], seen = {};
+        function snFrom(s){
+          var m = /([0-9]{6}-[0-9]{9,})/.exec(s || '');
+          return m ? m[1] : '';
+        }
+        function add(sn, text){
+          if (!sn || seen[sn] || !text) return;
+          seen[sn] = 1;
+          out.push({ sn: sn, text: text.length > 600 ? text.slice(0, 600) : text });
+        }
         var links = document.querySelectorAll('a[href*="order_sn="]');
         for (var i = 0; i < links.length; i++) {
           var a = links[i];
           var m = /order_sn=([A-Za-z0-9-]+)/.exec(a.href || '');
           if (!m) continue;
-          var sn = m[1];
-          if (seen[sn]) continue;
-          var p = a, best = null;
+          var p = a, best = '';
           for (var k = 0; k < 5 && p; k++) {
             p = p.parentElement;
             if (!p) break;
@@ -88,9 +95,15 @@ final class WebOrderFetcher: NSObject {
             if (t.length > 800) break;
             if (t.length > 30) best = t;
           }
-          if (!best) continue;
-          seen[sn] = 1;
-          out.push({ sn: sn, text: best.slice(0, 700) });
+          add(m[1], best);
+        }
+        var blocks = document.querySelectorAll('div,section,li');
+        for (var j = 0; j < blocks.length; j++) {
+          var el = blocks[j];
+          var tx = el.innerText || '';
+          if (tx.length < 10 || tx.length > 600) continue;
+          if (!/取件码|提货码|取货码|顺丰|中通|圆通|韵达|申通|极兔|邮政|EMS|德邦/.test(tx)) continue;
+          add(snFrom(tx), tx);
         }
         return JSON.stringify(out);
       } catch (e) { return '[]'; }

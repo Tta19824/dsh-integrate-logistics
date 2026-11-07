@@ -80,14 +80,21 @@ struct OrderRow: View {
 
                         Spacer(minLength: 0)
 
-                        Text(order.statusRaw.isEmpty ? order.status.label : order.statusRaw)
-                            .font(.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(statusColor.opacity(0.14))
-                            .foregroundStyle(statusColor)
-                            .clipShape(Capsule())
-                            .fixedSize()
+                        VStack(alignment: .trailing, spacing: 4) {
+                            Text(order.statusRaw.isEmpty ? order.status.label : order.statusRaw)
+                                .font(.caption)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(statusColor.opacity(0.14))
+                                .foregroundStyle(statusColor)
+                                .clipShape(Capsule())
+                                .fixedSize()
+                            if !order.carrier.isEmpty {
+                                Text(order.carrier)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
 
                     HStack(spacing: 10) {
@@ -117,18 +124,16 @@ struct OrderRow: View {
             }
 
             if !order.pickupCode.isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: 5) {
                     Image(systemName: "shippingbox.fill")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.white)
+                        .font(.system(size: 10))
                     Text("取件码 \(order.pickupCode)")
-                        .font(.subheadline.bold())
-                        .foregroundStyle(.white)
-                    Spacer(minLength: 0)
+                        .font(.caption.bold())
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(Color.orange, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.orange.opacity(0.14), in: Capsule())
             }
 
             if !order.logistics.isEmpty {
