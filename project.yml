@@ -1,4 +1,4 @@
-﻿name: OrderPocket
+name: OrderPocket
 options:
   bundleIdPrefix: com.abdd
   deploymentTarget:
@@ -23,8 +23,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.abdd.orderpocket
         PRODUCT_NAME: OrderPocket
-        MARKETING_VERSION: "0.6.8"
-        CURRENT_PROJECT_VERSION: "16"
+        MARKETING_VERSION: "0.6.9"
+        CURRENT_PROJECT_VERSION: "17"
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: OrderPocket
@@ -33,6 +33,7 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_UIRequiresFullScreen: YES
         ENABLE_BITCODE: NO
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "保存拼多多登录二维码到相册，方便用拼多多 App 扫码登录"
 
 schemes:
   OrderPocket:

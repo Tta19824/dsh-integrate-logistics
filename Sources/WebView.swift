@@ -10,6 +10,7 @@ struct WebView: UIViewRepresentable {
     /// 自动点「扫码登录」那个标签页
     var autoQR: Bool = false
     var onFinish: ((WKNavigation?) -> Void)?
+    var onReady: ((WKWebView) -> Void)?
 
     private static let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     private static let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
@@ -64,6 +65,7 @@ struct WebView: UIViewRepresentable {
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.customUserAgent = desktop ? Self.desktopUA : nil
+        onReady?(webView)
 
         if clearDomains.isEmpty {
             webView.load(URLRequest(url: url))
