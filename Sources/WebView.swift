@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import WebKit
 
 struct WebView: UIViewRepresentable {
@@ -34,6 +35,27 @@ struct WebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             NSLog("[web] finished: \(webView.url?.absoluteString ?? "-")")
             onFinish?(navigation)
+        }
+
+        /// 页面里点「打开拼多多 App」是自定义 scheme，WebView 自己打不开，得交给系统跳转
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            if let url = navigationAction.request.url,
+               let scheme = url.scheme?.lowercased(),
+               !["http", "https", "about", "data", "javascript", "file", "blob"].contains(scheme) {
+                UIApplication.shared.open(url, options: [:]) { ok in
+                    NSLog("[web] open external \(scheme) -> \(ok)")
+                }
+                decisionHandler(.cancel)
+                return
+            }
+            if navigationAction.targetFrame == nil {
+                webView.load(navigationAction.request)
+            }
+            decisionHandler(.allow)
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
