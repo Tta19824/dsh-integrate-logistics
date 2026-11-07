@@ -74,46 +74,51 @@ struct OrderRow: View {
     let order: Order
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
-                Text(order.platform.short)
-                    .font(.caption2.bold())
-                    .foregroundStyle(.white)
-                    .frame(width: 22, height: 22)
-                    .background(platformColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                thumbnail
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(order.title.isEmpty ? "（未识别商品名）" : order.title)
-                        .font(.subheadline)
-                        .lineLimit(2)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(order.title.isEmpty ? "（未识别商品名）" : order.title)
+                            .font(.subheadline)
+                            .lineLimit(4)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                    HStack(spacing: 6) {
+                        Spacer(minLength: 0)
+
+                        Text(order.statusRaw.isEmpty ? order.status.label : order.statusRaw)
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(statusColor.opacity(0.14))
+                            .foregroundStyle(statusColor)
+                            .clipShape(Capsule())
+                            .fixedSize()
+                    }
+
+                    HStack(spacing: 10) {
                         if !order.orderTime.isEmpty {
-                            Image(systemName: "clock")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                            Text(order.orderTime)
-                                .font(.caption2)
+                            HStack(spacing: 4) {
+                                Image(systemName: "clock")
+                                    .font(.system(size: 10))
+                                Text(order.orderTime)
+                                    .font(.caption2)
+                            }
+                            .foregroundStyle(.secondary)
+                        }
+                        if !order.amount.isEmpty {
+                            Text("¥\(order.amount)")
+                                .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
                     }
-                }
 
-                Spacer(minLength: 0)
-
-                VStack(alignment: .trailing, spacing: 6) {
-                    Text(order.statusRaw.isEmpty ? order.status.label : order.statusRaw)
-                        .font(.caption)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(statusColor.opacity(0.14))
-                        .foregroundStyle(statusColor)
-                        .clipShape(Capsule())
-
-                    if !order.amount.isEmpty {
-                        Text("¥\(order.amount)")
-                            .font(.subheadline.monospacedDigit())
+                    if !order.shopName.isEmpty {
+                        Text(order.shopName)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
                     }
                 }
             }
@@ -143,6 +148,32 @@ struct OrderRow: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 6)
+    }
+
+    private var thumbnail: some View {
+        AsyncImage(url: thumbURL) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFill()
+            default:
+                ZStack {
+                    Color(.secondarySystemBackground)
+                    Image(systemName: "photo")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .frame(width: 68, height: 68)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var thumbURL: URL? {
+        var s = order.imageURL.trimmingCharacters(in: .whitespaces)
+        if s.isEmpty { return nil }
+        if s.hasPrefix("//") { s = "https:" + s }
+        if s.hasPrefix("http://") { s = "https://" + s.dropFirst(7) }
+        return URL(string: s)
     }
 
     private var platformColor: Color {

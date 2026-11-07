@@ -107,6 +107,7 @@ struct Order: Identifiable, Codable, Equatable {
     var orderTime: String
     var logistics: String
     var pickupCode: String
+    var imageURL: String = ""
     var updatedAt: Date
 
     static func makeID(platform: Platform, orderNo: String) -> String {

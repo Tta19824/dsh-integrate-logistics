@@ -140,6 +140,7 @@ enum PinduoduoParser {
         amount = normalizeAmount(amount)
 
         var title = ""
+        var imageURL = ""
         var shop = firstString(dict, ["mall_name", "mallName", "store_name", "storeName", "shop_name", "shopName"]) ?? ""
         if shop.isEmpty, let mall = dict["mall"] as? [String: Any] {
             shop = firstString(mall, ["mall_name", "mallName", "shop_name", "shopName"]) ?? ""
@@ -147,6 +148,7 @@ enum PinduoduoParser {
         for key in ["order_goods", "orderGoods", "goods", "goods_list", "goodsList", "order_goods_list", "orderGoodsList", "items", "goods_info"] {
             guard let arr = dict[key] as? [[String: Any]], let first = arr.first else { continue }
             title = firstString(first, ["goods_name", "goodsName", "goods_title", "goodsTitle", "title", "name"]) ?? ""
+            imageURL = firstString(first, ["thumb_url", "thumbUrl", "hd_thumb_url", "hdThumbUrl", "image_url", "imageUrl", "goods_image", "goodsImage"]) ?? ""
             if shop.isEmpty {
                 shop = firstString(first, ["mall_name", "mallName", "store_name"]) ?? ""
             }
@@ -172,6 +174,7 @@ enum PinduoduoParser {
             orderTime: normalizeTime(time),
             logistics: "",
             pickupCode: "",
+            imageURL: imageURL,
             updatedAt: now
         )
     }
