@@ -236,73 +236,77 @@ struct LogisticsSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if !coordinates.isEmpty || !remaining.isEmpty {
-                        RouteMapView(
-                            path: path,
-                            remaining: remaining,
-                            truck: coordinates.last,
-                            caption: events.first?.desc ?? "当前位置"
-                        )
-                        .frame(height: mapHeight)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
+            VStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    RouteMapView(
+                        path: path,
+                        remaining: remaining,
+                        truck: coordinates.last,
+                        caption: events.first?.desc ?? "当前位置"
+                    )
+                    .frame(height: mapHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
 
-                        mapGrabber
-                    }
+                    mapGrabber
+                }
 
-                    trackingRow
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        trackingRow
+                            .padding(.horizontal, 16)
+                            .padding(.top, 2)
 
-                    if loading {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                            Text("正在读物流轨迹…").font(.footnote).foregroundStyle(.secondary)
-                        }
-                        .padding(16)
-                    } else if !message.isEmpty {
-                        Text(message)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                        if loading {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("正在读物流轨迹…").font(.footnote).foregroundStyle(.secondary)
+                            }
                             .padding(16)
-                    }
+                        } else if !message.isEmpty {
+                            Text(message)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .padding(16)
+                        }
 
-                    if !events.isEmpty {
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
-                                HStack(alignment: .top, spacing: 10) {
-                                    VStack(spacing: 0) {
-                                        Circle()
-                                            .fill(index == 0 ? Color.green : Color(.systemGray4))
-                                            .frame(width: 8, height: 8)
-                                            .padding(.top, 6)
-                                        Rectangle()
-                                            .fill(Color(.systemGray5))
-                                            .frame(width: 1)
-                                            .frame(maxHeight: .infinity)
-                                    }
-                                    .frame(width: 8)
-
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(event.desc)
-                                            .font(.footnote)
-                                            .foregroundStyle(index == 0 ? .primary : .secondary)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                        if !event.time.isEmpty {
-                                            Text(event.time)
-                                                .font(.caption2)
-                                                .foregroundStyle(.tertiary)
+                        if !events.isEmpty {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
+                                    HStack(alignment: .top, spacing: 10) {
+                                        VStack(spacing: 0) {
+                                            Circle()
+                                                .fill(index == 0 ? Color.green : Color(.systemGray4))
+                                                .frame(width: 8, height: 8)
+                                                .padding(.top, 6)
+                                            Rectangle()
+                                                .fill(Color(.systemGray5))
+                                                .frame(width: 1)
+                                                .frame(maxHeight: .infinity)
                                         }
+                                        .frame(width: 8)
+
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(event.desc)
+                                                .font(.footnote)
+                                                .foregroundStyle(index == 0 ? .primary : .secondary)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                            if !event.time.isEmpty {
+                                                Text(event.time)
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.tertiary)
+                                            }
+                                        }
+                                        .padding(.bottom, 16)
+                                        Spacer(minLength: 0)
                                     }
-                                    .padding(.bottom, 16)
-                                    Spacer(minLength: 0)
                                 }
                             }
+                            .padding(.horizontal, 16)
+                            .padding(.top, 14)
+                            .padding(.bottom, 16)
                         }
-                        .padding(16)
                     }
                 }
             }
@@ -326,10 +330,10 @@ struct LogisticsSheet: View {
                 .frame(width: 44, height: 5)
             Spacer()
         }
-        .frame(height: 26)
+        .frame(height: 24)
         .contentShape(Rectangle())
         .gesture(
-            DragGesture(minimumDistance: 1)
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
                 .onChanged { value in
                     if dragStart == nil { dragStart = mapHeight }
                     let base = dragStart ?? mapHeight
