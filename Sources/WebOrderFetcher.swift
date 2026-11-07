@@ -76,7 +76,7 @@ final class WebOrderFetcher: NSObject {
         var links = document.querySelectorAll('a[href*="order_sn="]');
         for (var i = 0; i < links.length; i++) {
           var a = links[i];
-          var m = /order_sn=([A-Za-z0-9\-]+)/.exec(a.href || '');
+          var m = /order_sn=([A-Za-z0-9-]+)/.exec(a.href || '');
           if (!m) continue;
           var sn = m[1];
           if (seen[sn]) continue;
