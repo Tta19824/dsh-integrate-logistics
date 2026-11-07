@@ -1,4 +1,4 @@
-﻿name: OrderPocket
+name: OrderPocket
 options:
   bundleIdPrefix: com.abdd
   deploymentTarget:
@@ -23,8 +23,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.abdd.orderpocket
         PRODUCT_NAME: OrderPocket
-        MARKETING_VERSION: "0.6.0"
-        CURRENT_PROJECT_VERSION: "8"
+        MARKETING_VERSION: "0.6.1"
+        CURRENT_PROJECT_VERSION: "9"
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: OrderPocket

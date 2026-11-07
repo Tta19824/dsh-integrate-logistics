@@ -69,8 +69,13 @@ enum CookieStore {
                 completion(nil)
                 return
             }
-            let header = matched
-                .map { "\($0.name)=\($0.value)" }
+            // 同名 cookie 可能挂在多个域名上，按域名从粗到细排，细的覆盖粗的
+            var map: [String: String] = [:]
+            for cookie in matched.sorted(by: { $0.domain.count < $1.domain.count }) {
+                map[cookie.name] = cookie.value
+            }
+            let header = map
+                .map { "\($0.key)=\($0.value)" }
                 .sorted()
                 .joined(separator: "; ")
             completion(header)
@@ -81,5 +86,14 @@ enum CookieStore {
     static func hasLogin(_ header: String?, platform: Platform) -> Bool {
         guard let header, !header.isEmpty else { return false }
         return platform.essentialCookies.contains { header.contains("\($0)=") }
+    }
+
+    /// 同步版的提取（async 包装），抓完单后拿来回写，做 token 续期。
+    static func currentHeader(for platform: Platform) async -> String? {
+        await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
+            extractFromWebView(for: platform) { header in
+                cont.resume(returning: header)
+            }
+        }
     }
 }

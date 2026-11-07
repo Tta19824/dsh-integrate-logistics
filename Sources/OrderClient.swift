@@ -76,14 +76,18 @@ enum OrderClient {
     private static func fetchPinduoduo(cookie: String) async throws -> FetchOutcome {
         let candidates = [
             "https://mobile.pinduoduo.com/order.html",
-            "https://mobile.yangkeduo.com/orders.html",
-            "https://mobile.pinduoduo.com/orders.html",
-            "https://mobile.pinduoduo.com/"
+            "https://mobile.yangkeduo.com/orders.html"
         ].compactMap { URL(string: $0) }
 
         guard !candidates.isEmpty else { throw FetchError.badURL }
 
-        let capture = try await WebOrderFetcher.shared.capture(urls: candidates, cookieHeader: cookie)
+        let capture = try await WebOrderFetcher.shared.capture(urls: candidates, cookieHeader: cookie, seconds: 15)
+
+        // 平台会在打开页面时轮换登录 token，抓完把最新的写回钥匙串，下次就不用重新登录
+        if !capture.cookieHeader.isEmpty, CookieStore.hasLogin(capture.cookieHeader, platform: .pdd),
+           capture.cookieHeader != cookie {
+            CookieStore.save(capture.cookieHeader, for: .pdd)
+        }
 
         var info = CaptureInfo()
         info.textChars = capture.text.count
@@ -116,13 +120,13 @@ enum OrderClient {
         }
 
         // 抓不到东西时，试三种 UA 直接请求一次，看看服务端渲染路线有没有可能
-        if info.entryCount < 3 || info.textChars < 600 {
-            info.uaProbe = await probeUserAgents(cookie: cookie, url: candidates[0])
+        if info.entryCount == 0, info.textChars < 300 {
+            info.uaProbe = await probeUserAgents(cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader, url: candidates[0])
         }
         lastCapture = info
 
         if capture.landedOnLogin {
-            throw FetchError.note("拼多多的登录态失效了（页面跳到了登录页）。请点「重新登录」，登录完再刷新订单。")
+            throw FetchError.note("拼多多的登录态失效了。点「重新登录」时建议用扫码登录（不会把手机 App 顶下线），登录完再刷新订单。")
         }
 
         let orders = attachLogistics(PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON), payloadJSON: capture.payloadJSON)

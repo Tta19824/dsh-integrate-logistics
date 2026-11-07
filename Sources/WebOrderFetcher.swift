@@ -16,6 +16,8 @@ final class WebOrderFetcher: NSObject {
         var payloadJSON: String
         var landedOnLogin = false
         var tried: [String] = []
+        /// 抓完之后 WebView 里的最新 cookie（平台会轮换 token，要回写）
+        var cookieHeader: String = ""
     }
 
     private var webView: WKWebView?
@@ -112,13 +114,15 @@ final class WebOrderFetcher: NSObject {
             }
 
             let payload = (try? await wv.evaluateJavaScript("JSON.stringify(window.__dshCap || [])")) as? String ?? "[]"
+            let freshCookie = await CookieStore.currentHeader(for: .pdd) ?? ""
             return Capture(
                 finalURL: wv.url?.absoluteString ?? url.absoluteString,
                 title: title,
                 text: text,
                 payloadJSON: payload,
                 landedOnLogin: false,
-                tried: tried
+                tried: tried,
+                cookieHeader: freshCookie
             )
         }
 
@@ -142,10 +146,15 @@ final class WebOrderFetcher: NSObject {
         return hits >= 2
     }
 
-    /// 把钥匙串里存的 cookie 灌回 WebView，避免 WebView 自己的存储被系统清过
+    /// 把钥匙串里存的 cookie 灌回 WebView，避免 WebView 自己的存储被系统清过。
+    /// 注意：WebView 里已经有的同名 cookie 不覆盖——那里的可能比钥匙串里的新。
     private func prefillCookies(_ header: String) async {
         guard !header.isEmpty else { return }
         let store = WKWebsiteDataStore.default().httpCookieStore
+        let existing = await withCheckedContinuation { (cont: CheckedContinuation<[HTTPCookie], Never>) in
+            store.getAllCookies { cont.resume(returning: $0) }
+        }
+        var existingNames = Set(existing.map { $0.name })
         let pairs = header.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
         let domains = [".pinduoduo.com", ".yangkeduo.com"]
         for pair in pairs {
@@ -153,7 +162,7 @@ final class WebOrderFetcher: NSObject {
             guard parts.count == 2 else { continue }
             let name = String(parts[0]).trimmingCharacters(in: .whitespaces)
             let value = String(parts[1]).trimmingCharacters(in: .whitespaces)
-            guard !name.isEmpty else { continue }
+            guard !name.isEmpty, !existingNames.contains(name) else { continue }
             for domain in domains {
                 let props: [HTTPCookiePropertyKey: Any] = [
                     .name: name,
@@ -166,6 +175,7 @@ final class WebOrderFetcher: NSObject {
                     store.setCookie(cookie) { cont.resume() }
                 }
             }
+            existingNames.insert(name)
         }
     }
 
