@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import WebKit
 import Photos
+import Combine
 
 final class WebHandle: ObservableObject {
     weak var view: WKWebView?
@@ -48,6 +49,7 @@ struct LoginSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var app: AppState
     @StateObject private var handle = WebHandle()
+    @State private var autoClosed = false
 
     var body: some View {
         NavigationStack {
@@ -58,6 +60,9 @@ struct LoginSheet: View {
                 autoQR: platform == .pdd,
                 onReady: { handle.view = $0 }
             )
+                .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
+                    detectLogin()
+                }
                 .ignoresSafeArea(edges: .bottom)
                 .navigationTitle("\(platform.name) 登录")
                 .navigationBarTitleDisplayMode(.inline)
@@ -82,6 +87,24 @@ struct LoginSheet: View {
                         }
                     }
                 }
+        }
+    }
+
+    // MARK: - 自动发现登录成功
+
+    private func detectLogin() {
+        guard !autoClosed else { return }
+        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+            let names = Set(cookies.map { $0.name })
+            let hit = platform.essentialCookies.allSatisfy { names.contains($0) }
+            guard hit else { return }
+            DispatchQueue.main.async {
+                guard !autoClosed else { return }
+                autoClosed = true
+                app.finishLogin(platform)
+                app.toast = "\(platform.name)：登录成功，凭证已自动保存"
+                dismiss()
+            }
         }
     }
 
