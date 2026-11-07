@@ -139,6 +139,15 @@ final class WebOrderFetcher: NSObject {
         )
     }
 
+    /// 打开单个订单的详情页，用来读物流轨迹和取件码。
+    func captureDetail(orderNo: String, cookieHeader: String) async throws -> Capture {
+        let encoded = orderNo.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? orderNo
+        guard let url = URL(string: "https://mobile.pinduoduo.com/order.html?order_sn=\(encoded)") else {
+            throw FetchError.badURL
+        }
+        return try await capture(urls: [url], cookieHeader: cookieHeader, seconds: 14)
+    }
+
     private func isLoginPage(title: String, text: String) -> Bool {
         if title == "登录" { return true }
         let marks = ["发送验证码", "请输入手机号", "密码登录", "请先登录", "扫码登录", "同意服务协议与隐私政策"]
