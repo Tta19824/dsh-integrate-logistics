@@ -3,6 +3,7 @@ import UIKit
 
 struct OrdersView: View {
     @EnvironmentObject private var app: AppState
+    @State private var selected: Order?
 
     var body: some View {
         NavigationStack {
@@ -29,6 +30,9 @@ struct OrdersView: View {
                         }
                     }
                 }
+            }
+            .sheet(item: $selected) { order in
+                LogisticsSheet(order: order)
             }
             .refreshable { app.refreshAll() }
         }
@@ -114,29 +118,34 @@ struct OrderRow: View {
                         }
                     }
 
-                    if !order.shopName.isEmpty {
-                        Text(order.shopName)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
+                    HStack(spacing: 8) {
+                        if !order.shopName.isEmpty {
+                            Text(order.shopName)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        Spacer(minLength: 8)
+                        if !order.pickupCode.isEmpty {
+                            HStack(spacing: 4) {
+                                Image(systemName: "shippingbox.fill")
+                                    .font(.system(size: 9))
+                                Text("取件码 \(order.pickupCode)")
+                                    .font(.caption2.bold())
+                                    .fixedSize()
+                            }
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.orange.opacity(0.14), in: Capsule())
+                        }
                     }
                 }
             }
 
-            if !order.pickupCode.isEmpty {
-                HStack(spacing: 5) {
-                    Image(systemName: "shippingbox.fill")
-                        .font(.system(size: 10))
-                    Text("取件码 \(order.pickupCode)")
-                        .font(.caption.bold())
-                }
-                .foregroundStyle(.orange)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.orange.opacity(0.14), in: Capsule())
-            }
-
             if !order.logistics.isEmpty {
+                Button { selected = order } label: {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "truck.box")
                         .font(.system(size: 13))
@@ -154,6 +163,8 @@ struct OrderRow: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 7)
                 .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.plain)
             }
 
         }
@@ -206,3 +217,128 @@ struct OrderRow: View {
         }
     }
 }
+
+struct LogisticsSheet: View {
+    let order: Order
+    @Environment(\.dismiss) private var dismiss
+    @State private var trace: [TraceEntry] = []
+    @State private var loading = true
+    @State private var message = ""
+    @State private var carrier = ""
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    header
+
+                    if loading {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("正在读物流轨迹…").font(.footnote).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if !message.isEmpty {
+                        Text(message)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if !trace.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(trace.enumerated()), id: \.element.id) { index, entry in
+                                HStack(alignment: .top, spacing: 10) {
+                                    VStack(spacing: 0) {
+                                        Circle()
+                                            .fill(index == 0 ? Color.green : Color(.systemGray4))
+                                            .frame(width: 8, height: 8)
+                                            .padding(.top, 5)
+                                        Rectangle()
+                                            .fill(Color(.systemGray5))
+                                            .frame(width: 1)
+                                            .frame(maxHeight: .infinity)
+                                    }
+                                    .frame(width: 8)
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        if !entry.time.isEmpty {
+                                            Text(entry.time)
+                                                .font(.caption2)
+                                                .foregroundStyle(.tertiary)
+                                        }
+                                        Text(entry.text)
+                                            .font(.footnote)
+                                            .foregroundStyle(index == 0 ? .primary : .secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    .padding(.bottom, 14)
+                                    Spacer(minLength: 0)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+            }
+            .navigationTitle("物流详情")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+            .task { await load() }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(carrier.isEmpty ? (order.carrier.isEmpty ? "物流" : order.carrier) : carrier)
+                    .font(.headline)
+                if !order.pickupCode.isEmpty {
+                    Text("取件码 \(order.pickupCode)")
+                        .font(.caption.bold())
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.orange.opacity(0.14), in: Capsule())
+                }
+                Spacer(minLength: 0)
+            }
+
+            Text(order.title)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            Text("订单号 \(order.orderNo)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func load() async {
+        guard let cookie = await CookieStore.currentHeader(for: .pdd), !cookie.isEmpty else {
+            message = "还没登录拼多多，先去「平台」页登录"
+            loading = false
+            return
+        }
+        do {
+            let capture = try await WebOrderFetcher.shared.captureDetail(orderNo: order.orderNo, cookieHeader: cookie)
+            let entries = DetailParser.trace(from: capture.text)
+            trace = entries
+            if carrier.isEmpty {
+                carrier = PinduoduoParser.carrierName(from: capture.text) ?? order.carrier
+            }
+            if entries.isEmpty { message = "没读到轨迹，可能这单还没发出" }
+        } catch {
+            message = "打开物流页失败：\(error)"
+        }
+        loading = false
+    }
+}
+
