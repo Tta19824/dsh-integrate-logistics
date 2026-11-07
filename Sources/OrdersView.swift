@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreLocation
 import UIKit
 
 struct OrdersView: View {
@@ -222,38 +223,45 @@ struct OrderRow: View {
 struct LogisticsSheet: View {
     let order: Order
     @Environment(\.dismiss) private var dismiss
-    @State private var trace: [TraceEntry] = []
+    @State private var events: [ShipEvent] = []
+    @State private var coordinates: [CLLocationCoordinate2D] = []
     @State private var loading = true
     @State private var message = ""
-    @State private var carrier = ""
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    header
+                VStack(alignment: .leading, spacing: 0) {
+                    if !coordinates.isEmpty {
+                        RouteMapView(coordinates: coordinates)
+                            .frame(height: 230)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
+                    }
 
                     if loading {
                         HStack(spacing: 8) {
                             ProgressView()
                             Text("正在读物流轨迹…").font(.footnote).foregroundStyle(.secondary)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
                     } else if !message.isEmpty {
                         Text(message)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                            .padding(16)
                     }
 
-                    if !trace.isEmpty {
+                    if !events.isEmpty {
                         VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(trace.enumerated()), id: \.element.id) { index, entry in
+                            ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
                                 HStack(alignment: .top, spacing: 10) {
                                     VStack(spacing: 0) {
                                         Circle()
                                             .fill(index == 0 ? Color.green : Color(.systemGray4))
                                             .frame(width: 8, height: 8)
-                                            .padding(.top, 5)
+                                            .padding(.top, 6)
                                         Rectangle()
                                             .fill(Color(.systemGray5))
                                             .frame(width: 1)
@@ -262,24 +270,24 @@ struct LogisticsSheet: View {
                                     .frame(width: 8)
 
                                     VStack(alignment: .leading, spacing: 3) {
-                                        if !entry.time.isEmpty {
-                                            Text(entry.time)
-                                                .font(.caption2)
-                                                .foregroundStyle(.tertiary)
-                                        }
-                                        Text(entry.text)
+                                        Text(event.desc)
                                             .font(.footnote)
                                             .foregroundStyle(index == 0 ? .primary : .secondary)
                                             .fixedSize(horizontal: false, vertical: true)
+                                        if !event.time.isEmpty {
+                                            Text(event.time)
+                                                .font(.caption2)
+                                                .foregroundStyle(.tertiary)
+                                        }
                                     }
-                                    .padding(.bottom, 14)
+                                    .padding(.bottom, 16)
                                     Spacer(minLength: 0)
                                 }
                             }
                         }
+                        .padding(16)
                     }
                 }
-                .padding(16)
             }
             .navigationTitle("物流详情")
             .navigationBarTitleDisplayMode(.inline)
@@ -292,54 +300,33 @@ struct LogisticsSheet: View {
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(carrier.isEmpty ? (order.carrier.isEmpty ? "物流" : order.carrier) : carrier)
-                    .font(.headline)
-                if !order.pickupCode.isEmpty {
-                    Text("取件码 \(order.pickupCode)")
-                        .font(.caption.bold())
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.orange.opacity(0.14), in: Capsule())
-                }
-                Spacer(minLength: 0)
-            }
-
-            Text(order.title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-
-            Text("订单号 \(order.orderNo)")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
     private func load() async {
         guard let cookie = await CookieStore.currentHeader(for: .pdd), !cookie.isEmpty else {
             message = "还没登录拼多多，先去「平台」页登录"
             loading = false
             return
         }
-        do {
-            let capture = try await WebOrderFetcher.shared.captureDetail(orderNo: order.orderNo, cookieHeader: cookie)
-            let entries = DetailParser.trace(from: capture.text)
-            trace = entries
-            if carrier.isEmpty {
-                carrier = PinduoduoParser.carrierName(from: capture.text) ?? order.carrier
+
+        if let result = await ShippingClient.track(orderNo: order.orderNo, cookieHeader: cookie) {
+            events = result.events
+        }
+
+        if events.isEmpty {
+            if let capture = try? await WebOrderFetcher.shared.captureDetail(orderNo: order.orderNo, cookieHeader: cookie) {
+                events = DetailParser.trace(from: capture.text).map {
+                    ShipEvent(id: $0.id, time: $0.time, desc: $0.text)
+                }
             }
-            if entries.isEmpty { message = "没读到轨迹，可能这单还没发出" }
-        } catch {
-            message = "打开物流页失败：\(error)"
+        }
+
+        if events.isEmpty {
+            message = "没读到轨迹，可能这单还没发出"
+        } else {
+            let names = ShipTracking.placeNames(in: events)
+            if !names.isEmpty {
+                coordinates = await ShipTracking.coordinates(for: names)
+            }
         }
         loading = false
     }
 }
-
