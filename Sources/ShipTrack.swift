@@ -86,7 +86,7 @@ enum ShipTracking {
         let keys = ["receiver_address", "receive_address", "receiverAddress", "receiveAddress", "receiver_addr", "address", "addr"]
         if let hit = firstString(in: object, keys: keys), hit.contains("省") || hit.contains("市") { return hit }
         let text = String(data: data, encoding: .utf8) ?? ""
-        let pattern = "([\\u4e00-\\u9fa5]{2,8}省[^\\"]{4,60}|[\\u4e00-\\u9fa5]{2,8}市[^\\"]{4,60})"
+        let pattern = #"([\u4e00-\u9fa5]{2,8}省[^"]{4,60}|[\u4e00-\u9fa5]{2,8}市[^"]{4,60})"#
         if let regex = try? NSRegularExpression(pattern: pattern),
            let match = regex.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)) {
             return (text as NSString).substring(with: match.range)
