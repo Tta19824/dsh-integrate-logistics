@@ -18,6 +18,8 @@ final class WebOrderFetcher: NSObject {
         var tried: [String] = []
         /// 抓完之后 WebView 里的最新 cookie（平台会轮换 token，要回写）
         var cookieHeader: String = ""
+        /// 订单列表卡片上的文字（含取件码、最新物流），JSON 数组 [{sn,text}]
+        var cardsJSON: String = "[]"
     }
 
     private var webView: WKWebView?
@@ -64,6 +66,35 @@ final class WebOrderFetcher: NSObject {
       s: (window.__dshCap || []).reduce(function(a, c){ return a + (c.b ? c.b.length : 0); }, 0),
       t: (document.body ? document.body.innerText.length : 0)
     })
+    """
+
+    /// 抓订单列表卡片：每张卡片里有订单号链接、取件码、最新一条物流。
+    static let cardsJS = """
+    (function(){
+      try {
+        var seen = {}, out = [];
+        var links = document.querySelectorAll('a[href*="order_sn="]');
+        for (var i = 0; i < links.length; i++) {
+          var a = links[i];
+          var m = /order_sn=([A-Za-z0-9\-]+)/.exec(a.href || '');
+          if (!m) continue;
+          var sn = m[1];
+          if (seen[sn]) continue;
+          var p = a, best = null;
+          for (var k = 0; k < 5 && p; k++) {
+            p = p.parentElement;
+            if (!p) break;
+            var t = p.innerText || '';
+            if (t.length > 800) break;
+            if (t.length > 30) best = t;
+          }
+          if (!best) continue;
+          seen[sn] = 1;
+          out.push({ sn: sn, text: best.slice(0, 700) });
+        }
+        return JSON.stringify(out);
+      } catch (e) { return '[]'; }
+    })()
     """
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
@@ -122,6 +153,7 @@ final class WebOrderFetcher: NSObject {
                 await self.sleep(2.8)
             }
 
+            let cards = (try? await wv.evaluateJavaScript(Self.cardsJS)) as? String ?? "[]"
             let payload = (try? await wv.evaluateJavaScript("JSON.stringify(window.__dshCap || [])")) as? String ?? "[]"
             let freshCookie = await CookieStore.currentHeader(for: .pdd) ?? ""
             return Capture(
@@ -131,7 +163,8 @@ final class WebOrderFetcher: NSObject {
                 payloadJSON: payload,
                 landedOnLogin: false,
                 tried: tried,
-                cookieHeader: freshCookie
+                cookieHeader: freshCookie,
+                cardsJSON: cards
             )
         }
 

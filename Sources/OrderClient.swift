@@ -134,7 +134,9 @@ enum OrderClient {
             throw FetchError.note("拼多多的登录态失效了。点「重新登录」时建议用扫码登录（不会把手机 App 顶下线），登录完再刷新订单。")
         }
 
-        let orders = attachLogistics(PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON), payloadJSON: capture.payloadJSON)
+        var orders = attachLogistics(PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON), payloadJSON: capture.payloadJSON)
+        // 列表卡片上直接带着取件码 / 最新物流，不用再点进详情页
+        orders = PinduoduoParser.applyCards(orders, cardsJSON: capture.cardsJSON)
 
         var note = info.entryCount > 0
             ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单"

@@ -185,6 +185,42 @@ enum PinduoduoParser {
         )
     }
 
+    /// 把订单列表卡片上的文字（取件码、最新物流）合进订单里。
+    static func applyCards(_ orders: [Order], cardsJSON: String) -> [Order] {
+        guard let data = cardsJSON.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              !arr.isEmpty else { return orders }
+        var bySN: [String: String] = [:]
+        for card in arr {
+            guard let sn = card["sn"] as? String, let text = card["text"] as? String else { continue }
+            bySN[snKey(sn)] = text
+        }
+        return orders.map { order in
+            guard let text = bySN[snKey(order.orderNo)] else { return order }
+            var next = order
+            let code = DetailParser.pickupCode(from: text)
+            if !code.isEmpty { next.pickupCode = code }
+            if let line = logisticsLine(from: text) { next.logistics = line }
+            return next
+        }
+    }
+
+    private static func snKey(_ raw: String) -> String {
+        raw.uppercased().filter { $0.isLetter || $0.isNumber }
+    }
+
+    /// 卡片里那句物流，比如「运输中 预计明天送达 | 中通国际：…」或「已到菜鸟驿站，取件码 8-2-1234」
+    static func logisticsLine(from text: String) -> String? {
+        let markers = ["快递", "运输", "驿站", "派送", "取件", "到达", "签收", "暂存", "柜"]
+        for raw in text.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard line.count >= 6, line.count <= 90 else { continue }
+            guard !line.contains("订单号") else { continue }
+            if markers.contains(where: { line.contains($0) }) { return line }
+        }
+        return nil
+    }
+
     /// 平台接口里的金额基本是「分」，界面上要显示成两位小数的元。
     /// 已经是小数的原样保留；纯整数的除以 100。
     private static func normalizeAmount(_ raw: String) -> String {
