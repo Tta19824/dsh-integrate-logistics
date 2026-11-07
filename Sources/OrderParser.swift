@@ -1,7 +1,8 @@
-﻿import Foundation
+import Foundation
 
 enum HTMLTools {
-    /// 鍘绘帀鏍囩銆佽剼鏈€佹牱寮忥紝鍘嬬缉绌虹櫧锛岀暀涓嬪彲璇绘枃鏈€?    static func strip(_ html: String) -> String {
+    /// 去掉标签、脚本、样式，压缩空白，留下可读文本。
+    static func strip(_ html: String) -> String {
         var s = html
         s = s.replacingOccurrences(of: "(?is)<script.*?</script>", with: " ", options: .regularExpression)
         s = s.replacingOccurrences(of: "(?is)<style.*?</style>", with: " ", options: .regularExpression)
@@ -38,7 +39,8 @@ enum HTMLTools {
     }
 }
 
-/// 绋冲畾鐨勫瓧绗︿覆鍝堝笇锛圫wift 鐨?hashValue 姣忔鍚姩閮藉彉锛屼笉鑳芥嬁鏉ュ仛璁㈠崟涓婚敭锛?func stableHash(_ text: String) -> String {
+/// 稳定的字符串哈希（Swift 的 hashValue 每次启动都变，不能拿来做订单主键）
+func stableHash(_ text: String) -> String {
     var hash: UInt64 = 5381
     for byte in text.utf8 {
         hash = (hash &* 33) &+ UInt64(byte)
@@ -46,14 +48,16 @@ enum HTMLTools {
     return String(hash, radix: 16)
 }
 
-/// 鎷煎澶氳鍗曢〉鏄墠绔覆鏌撶殑绌哄３锛孒TML 閲屾病鏈夎鍗曟暟鎹€?/// 鎵€浠ヨВ鏋愬垎涓よ矾锛氫紭鍏堝悆 WebView 鎶撳埌鐨勬帴鍙?JSON锛岄€€鑰屾眰鍏舵鍚冩覆鏌撳悗鐨勭函鏂囨湰銆?enum PinduoduoParser {
+/// 拼多多订单页是前端渲染的空壳，HTML 里没有订单数据。
+/// 所以解析分两路：优先吃 WebView 抓到的接口 JSON，退而求其次吃渲染后的纯文本。
+enum PinduoduoParser {
     static let statusWords = [
-        "寰呭彂璐?, "寰呮敹璐?, "寰呬粯娆?, "宸插畬鎴?, "宸插彇娑?, "宸茬鏀?,
-        "浜ゆ槗鎴愬姛", "浜ゆ槗鍏抽棴", "閫€娆句腑", "寰呮垚鍥?, "鎷煎崟鎴愬姛", "寰呰瘎浠?,
-        "寰呭彇浠?, "杩愯緭涓?, "娲鹃€佷腑", "宸插彂璐?
+        "待发货", "待收货", "待付款", "已完成", "已取消", "已签收",
+        "交易成功", "交易关闭", "退款中", "待成团", "拼单成功", "待评价",
+        "待取件", "运输中", "派送中", "已发货"
     ]
 
-    // MARK: 鍏ュ彛
+    // MARK: 入口
 
     static func parse(text: String, payloadJSON: String, now: Date = Date()) -> [Order] {
         let fromJSON = parsePayload(payloadJSON, now: now)
@@ -65,7 +69,7 @@ enum HTMLTools {
         parseText(HTMLTools.strip(html), now: now)
     }
 
-    // MARK: 鎺ュ彛 JSON
+    // MARK: 接口 JSON
 
     static func parsePayload(_ jsonText: String, now: Date = Date()) -> [Order] {
         guard let data = jsonText.data(using: .utf8),
@@ -124,7 +128,7 @@ enum HTMLTools {
             "status_desc", "statusDesc", "order_status_str", "status_str", "status_text", "statusText"
         ]) ?? ""
         let code = firstInt(dict, ["status", "order_status", "orderStatus"]) ?? -1
-        let statusRaw = prompt.isEmpty ? (code >= 0 ? "鐘舵€佺爜 \(code)" : "鏈瘑鍒?) : prompt
+        let statusRaw = prompt.isEmpty ? (code >= 0 ? "状态码 \(code)" : "未识别") : prompt
 
         var amount = firstString(dict, [
             "display_amount", "order_amount", "orderAmount", "pay_amount", "payAmount",
@@ -164,7 +168,7 @@ enum HTMLTools {
             shopName: shop,
             amount: amount,
             status: pddStatus(code: code, prompt: prompt),
-            statusRaw: statusRaw.isEmpty ? "鏈瘑鍒? : statusRaw,
+            statusRaw: statusRaw.isEmpty ? "未识别" : statusRaw,
             orderTime: normalizeTime(time),
             logistics: "",
             pickupCode: "",
@@ -172,9 +176,11 @@ enum HTMLTools {
         )
     }
 
-    /// 骞冲彴鎺ュ彛閲岀殑閲戦鍩烘湰鏄€屽垎銆嶏紝鐣岄潰涓婅鏄剧ず鎴愪袱浣嶅皬鏁扮殑鍏冦€?    /// 宸茬粡鏄皬鏁扮殑鍘熸牱淇濈暀锛涚函鏁存暟鐨勯櫎浠?100銆?    private static func normalizeAmount(_ raw: String) -> String {
+    /// 平台接口里的金额基本是「分」，界面上要显示成两位小数的元。
+    /// 已经是小数的原样保留；纯整数的除以 100。
+    private static func normalizeAmount(_ raw: String) -> String {
         var s = raw.trimmingCharacters(in: .whitespaces)
-        for prefix in ["楼", "锟?] where s.hasPrefix(prefix) {
+        for prefix in ["¥", "￥"] where s.hasPrefix(prefix) {
             s.removeFirst()
         }
         s = s.trimmingCharacters(in: .whitespaces)
@@ -217,13 +223,15 @@ enum HTMLTools {
         return nil
     }
 
-    /// 鎷煎澶氱殑鐘舵€佹槸鏁板瓧鐮侊紝浣嗘瘡鍗曡繕甯︿竴鍙?prompt锛堝厖鍊煎埌璐?/ 浜ゆ槗鎴愬姛 / 浜ゆ槗宸插彇娑堚€︼級锛?    /// prompt 鏇村噯锛屽厛鐢ㄥ畠锛岃涓嶅嚭鍐嶉€€鍥炴暟瀛楃爜銆?    static func pddStatus(code: Int, prompt: String) -> OrderStatus {
-        if prompt.contains("鍙栨秷") || prompt.contains("鍏抽棴") { return .cancelled }
-        if prompt.contains("閫€娆?) || prompt.contains("鍞悗") || prompt.contains("閫€璐?) { return .refunding }
-        if prompt.contains("寰呮敹璐?) || prompt.contains("杩愯緭") || prompt.contains("娲鹃€?) || prompt.contains("寰呭彇浠?) { return .shipped }
-        if prompt.contains("寰呭彂璐?) || prompt.contains("寰呮垚鍥?) { return .paid }
-        if prompt.contains("寰呬粯娆?) || prompt.contains("寰呮敮浠?) { return .unpaid }
-        if prompt.contains("鎴愬姛") || prompt.contains("鍒拌处") || prompt.contains("瀹屾垚") || prompt.contains("宸茬鏀?) { return .completed }
+    /// 拼多多的状态是数字码，但每单还带一句 prompt（充值到账 / 交易成功 / 交易已取消…），
+    /// prompt 更准，先用它，认不出再退回数字码。
+    static func pddStatus(code: Int, prompt: String) -> OrderStatus {
+        if prompt.contains("取消") || prompt.contains("关闭") { return .cancelled }
+        if prompt.contains("退款") || prompt.contains("售后") || prompt.contains("退货") { return .refunding }
+        if prompt.contains("待收货") || prompt.contains("运输") || prompt.contains("派送") || prompt.contains("待取件") { return .shipped }
+        if prompt.contains("待发货") || prompt.contains("待成团") { return .paid }
+        if prompt.contains("待付款") || prompt.contains("待支付") { return .unpaid }
+        if prompt.contains("成功") || prompt.contains("到账") || prompt.contains("完成") || prompt.contains("已签收") { return .completed }
         switch code {
         case 0: return .unpaid
         case 1, 2, 3: return .shipped
@@ -234,7 +242,7 @@ enum HTMLTools {
         }
     }
 
-    // MARK: 娓叉煋鍚庣函鏂囨湰
+    // MARK: 渲染后纯文本
 
     static func parseText(_ text: String, now: Date = Date()) -> [Order] {
         let lines = text
@@ -250,7 +258,7 @@ enum HTMLTools {
             let lower = max(0, index - 5)
             let window = Array(lines[lower...index])
             guard let title = guessTitle(from: window) else { continue }
-            let amount = window.compactMap { HTMLTools.firstMatch("(?:楼|锟?\\s*([0-9]+(?:\\.[0-9]{1,2})?)", in: $0) }.first ?? ""
+            let amount = window.compactMap { HTMLTools.firstMatch("(?:¥|￥)\\s*([0-9]+(?:\\.[0-9]{1,2})?)", in: $0) }.first ?? ""
             let key = "\(title)|\(amount)|\(status)"
             let orderNo = "T" + stableHash(key).uppercased()
             let id = Order.makeID(platform: .pdd, orderNo: orderNo)
@@ -276,16 +284,47 @@ enum HTMLTools {
     }
 
     private static func guessTitle(from window: [String]) -> String? {
-        let banned = ["璁㈠崟鍙?, "璁㈠崟缂栧彿", "瀹炰粯", "鍚堣", "杩愯垂", "浼樻儬", "鏌ョ湅鐗╂祦",
-                      "纭鏀惰揣", "鍐嶆璐拱", "鐢宠鍞悗", "璇勪环", "鍒犻櫎", "鏇村", "鍏ㄩ儴"]
+        let banned = ["订单号", "订单编号", "实付", "合计", "运费", "优惠", "查看物流",
+                      "确认收货", "再次购买", "申请售后", "评价", "删除", "更多", "全部"]
         for line in window.reversed() {
             guard line.count >= 6 else { continue }
             if banned.contains(where: { line.contains($0) }) { continue }
-            if line.allSatisfy({ $0.isNumber || "-:锛毬ワ骏. ".contains($0) }) { continue }
+            if line.allSatisfy({ $0.isNumber || "-:：¥￥. ".contains($0) }) { continue }
             if statusWords.contains(where: { line.contains($0) }) && line.count < 8 { continue }
             return String(line.prefix(60))
         }
         return nil
+    }
+}
+
+enum DetailParser {
+    /// 从订单详情页的文本里抠取件码，比如「取件码：8-2-1234」
+    static func pickupCode(from text: String) -> String {
+        let patterns = [
+            "(?:取件码|提货码|取货码|取件号)[^0-9A-Za-z\\-]{0,6}([0-9A-Za-z\\-]{3,14})",
+            "([0-9]{1,2}-[0-9]{1,2}-[0-9]{3,8})"
+        ]
+        for p in patterns {
+            if let hit = HTMLTools.firstMatch(p, in: text) {
+                return hit
+            }
+        }
+        return ""
+    }
+
+    /// 把详情页文本里像物流的几行挑出来
+    static func logisticsLines(from text: String) -> [String] {
+        let keys = ["已签收", "派送", "派件", "到达", "离开", "运输中", "揽收", "驿站", "快递柜", "代收点", "取件", "待取", "预计"]
+        var out: [String] = []
+        for raw in text.components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.count < 4 || line.count > 60 { continue }
+            if keys.contains(where: { line.contains($0) }) {
+                if !out.contains(line) { out.append(line) }
+            }
+            if out.count >= 8 { break }
+        }
+        return out
     }
 }
 
@@ -314,8 +353,8 @@ enum DetailParser {
     /// 当前物流状态词
     static func statusWord(from text: String) -> String {
         let words = ["已签收", "派送中", "派件中", "待取件", "运输中", "已发货", "已揽收", "待发货", "待收货"]
-        for w in text.components(separatedBy: "\n") {
-            let line = w.trimmingCharacters(in: .whitespaces)
+        for raw in text.components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
             if line.count > 20 { continue }
             if words.contains(where: { line == $0 || line.hasPrefix($0 + " ") }) { return line }
         }
@@ -329,7 +368,7 @@ enum DetailParser {
         return ""
     }
 
-    /// 物流轨迹：形如「2026-11-07 11:05:16\n【盘锦市】快件离开…」
+    /// 物流轨迹：形如「2026-11-07 11:05:16」后面跟一行说明
     static func trace(from text: String) -> [TraceEntry] {
         guard let re = try? NSRegularExpression(pattern: "\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}") else { return [] }
         let ns = text as NSString
