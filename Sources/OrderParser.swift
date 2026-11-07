@@ -318,6 +318,44 @@ enum DetailParser {
         return String(text[r]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// 真实店铺名。百亿补贴/品牌馆订单的 mall_name 是品牌馆名字（如「百亿补贴·宝格丽」），
+    /// 真正的商家只在订单详情页里出现，所以这里从详情页的接口数据和正文里捞。
+    static func shopName(payloadJSON: String, text: String) -> String {
+        if let data = payloadJSON.data(using: .utf8),
+           let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            for entry in entries {
+                guard let body = entry["b"] as? String,
+                      let bodyData = body.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: bodyData) else { continue }
+                if let hit = findShop(in: obj) { return hit }
+            }
+        }
+        return firstMatch("([\u4e00-\u9fa5A-Za-z0-9（）()·]{2,18}(?:专营店|专卖店|旗舰店|官方店|品牌店))", in: text) ?? ""
+    }
+
+    private static func findShop(in obj: Any) -> String? {
+        if let dict = obj as? [String: Any] {
+            for key in ["mall_name", "mallName", "shop_name", "shopName", "store_name", "storeName", "mall_title", "mallTitle"] {
+                if let value = dict[key] as? String, looksLikeShop(value) { return value }
+            }
+            for value in dict.values {
+                if let hit = findShop(in: value) { return hit }
+            }
+        } else if let arr = obj as? [Any] {
+            for value in arr {
+                if let hit = findShop(in: value) { return hit }
+            }
+        }
+        return nil
+    }
+
+    private static func looksLikeShop(_ raw: String) -> Bool {
+        let s = raw.trimmingCharacters(in: .whitespaces)
+        guard s.count >= 4, s.count <= 30 else { return false }
+        if s.hasPrefix("百亿补贴") || s.hasPrefix("品牌馆") { return false }
+        return ["专营店", "专卖店", "旗舰店", "官方店", "企业店"].contains { s.contains($0) }
+    }
+
     /// 取件码，例如「取件码：8-2-1234」
     static func pickupCode(from text: String) -> String {
         firstMatch("(?:取件码|提货码|取货码|取件号)[^0-9A-Za-z\\-]{0,8}([0-9A-Za-z\\-]{3,14})", in: text)

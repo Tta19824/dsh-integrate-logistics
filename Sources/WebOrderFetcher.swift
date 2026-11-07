@@ -67,7 +67,7 @@ final class WebOrderFetcher: NSObject {
     """
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
-    func capture(urls: [URL], cookieHeader: String, seconds: Double = 22) async throws -> Capture {
+    func capture(urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true) async throws -> Capture {
         let cfg = WKWebViewConfiguration()
         cfg.websiteDataStore = .default()
         cfg.allowsInlineMediaPlayback = true
@@ -113,12 +113,14 @@ final class WebOrderFetcher: NSObject {
                 if isLoginPage(title: title, text: text) { continue }
             }
 
-            // 只关心「待发货 / 待收货」两个标签：点一下让页面去请求对应列表，
-            // 抓到的多个 order_list_v4 响应会在解析时合并。
-            _ = try? await wv.evaluateJavaScript(self.clickTabJS(["待发货", "打包中"]))
-            await self.sleep(3.5)
-            _ = try? await wv.evaluateJavaScript(self.clickTabJS(["待收货"]))
-            await self.sleep(4.0)
+            if clickTabs {
+                // 只关心「待发货 / 待收货」两个标签：点一下让页面去请求对应列表，
+                // 抓到的多个 order_list_v4 响应会在解析时合并。
+                _ = try? await wv.evaluateJavaScript(self.clickTabJS(["待发货", "打包中"]))
+                await self.sleep(3.5)
+                _ = try? await wv.evaluateJavaScript(self.clickTabJS(["待收货"]))
+                await self.sleep(4.0)
+            }
 
             let payload = (try? await wv.evaluateJavaScript("JSON.stringify(window.__dshCap || [])")) as? String ?? "[]"
             let freshCookie = await CookieStore.currentHeader(for: .pdd) ?? ""
@@ -152,7 +154,7 @@ final class WebOrderFetcher: NSObject {
         guard let url = URL(string: "https://mobile.pinduoduo.com/order.html?order_sn=\(encoded)") else {
             throw FetchError.badURL
         }
-        return try await capture(urls: [url], cookieHeader: cookieHeader, seconds: 14)
+        return try await capture(urls: [url], cookieHeader: cookieHeader, seconds: 14, clickTabs: false)
     }
 
     private func isLoginPage(title: String, text: String) -> Bool {
