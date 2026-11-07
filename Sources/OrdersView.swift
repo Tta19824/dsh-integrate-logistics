@@ -194,7 +194,7 @@ struct OrderRow: View {
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 16, height: 16)
-                .background(platformColor, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .background(platformBadgeColor, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .stroke(Color(.systemBackground), lineWidth: 1.5)
@@ -203,7 +203,7 @@ struct OrderRow: View {
         }
     }
 
-    private var platformColor: Color {
+    private var platformBadgeColor: Color {
         switch order.platform {
         case .pdd: return Color(red: 0.90, green: 0.13, blue: 0.17)
         case .tb: return Color(red: 1.00, green: 0.42, blue: 0.05)

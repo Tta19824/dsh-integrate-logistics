@@ -272,7 +272,7 @@ struct RouteMapView: UIViewRepresentable {
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(caption: caption) }
+    func makeCoordinator() -> Coordinator { Coordinator(caption: caption, subcaption: subcaption) }
 
     final class TruckAnnotation: MKPointAnnotation {
         var subtitleText = ""
@@ -324,9 +324,13 @@ struct RouteMapView: UIViewRepresentable {
 
     final class Coordinator: NSObject, MKMapViewDelegate {
         let caption: String
+        let subcaption: String
         var remainingLine: MKPolyline?
         var lastKey: String?
-        init(caption: String) { self.caption = caption }
+        init(caption: String, subcaption: String) {
+            self.caption = caption
+            self.subcaption = subcaption
+        }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             guard let line = overlay as? MKPolyline else { return MKOverlayRenderer(overlay: overlay) }
