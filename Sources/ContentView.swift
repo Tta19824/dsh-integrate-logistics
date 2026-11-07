@@ -94,16 +94,35 @@ struct LoginSheet: View {
         }
         let js = """
         (function(){
-          var i = document.querySelector('.qrcode-login img')
-               || document.querySelector('.qrcode-login canvas');
-          if (!i) return '';
-          if (i.tagName === 'CANVAS') { try { return i.toDataURL('image/png'); } catch (e) { return ''; } }
-          return i.src || '';
+          var best = null, bestArea = 0;
+          var list = document.querySelectorAll('img, canvas');
+          for (var i = 0; i < list.length; i++) {
+            var el = list[i];
+            var r = el.getBoundingClientRect();
+            if (r.width < 100 || r.height < 100) continue;
+            var st = window.getComputedStyle(el);
+            if (st.display === 'none' || st.visibility === 'hidden') continue;
+            if (parseFloat(st.opacity || '1') < 0.1) continue;
+            var a = r.width * r.height;
+            var hint = ((el.className || '') + ' ' + (el.src || '')).toLowerCase();
+            if (hint.indexOf('qr') >= 0) a = a * 20;
+            if (a > bestArea) { bestArea = a; best = el; }
+          }
+          if (!best) return 'NONE:imgs=' + document.images.length;
+          if (best.tagName === 'CANVAS') {
+            try { return best.toDataURL('image/png'); } catch (e) { return 'ERR:canvas'; }
+          }
+          if (best.src && best.src.length > 20) return best.src;
+          return 'ERR:empty:' + (best.className || '');
         })()
         """
         wv.evaluateJavaScript(js) { result, _ in
             guard let src = result as? String, !src.isEmpty else {
                 DispatchQueue.main.async { app.toast = "没找到二维码，等它出来再点" }
+                return
+            }
+            if src.hasPrefix("NONE") || src.hasPrefix("ERR") {
+                DispatchQueue.main.async { app.toast = "二维码定位失败（\(src)）" }
                 return
             }
             Self.loadImage(src) { image in
