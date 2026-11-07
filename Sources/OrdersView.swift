@@ -333,7 +333,7 @@ struct LogisticsSheet: View {
                 .onChanged { value in
                     if dragStart == nil { dragStart = mapHeight }
                     let base = dragStart ?? mapHeight
-                    mapHeight = min(max(base - value.translation.height, 140), 560)
+                    mapHeight = min(max(base + value.translation.height, 140), 560)
                 }
                 .onEnded { _ in dragStart = nil }
         )
