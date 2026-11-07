@@ -60,6 +60,11 @@ enum OrderClient {
         rawDirectory().appendingPathComponent("payload_\(platform.rawValue).json")
     }
 
+    /// 订单详情页抓到的接口数据（排查店铺名用）
+    static func detailPayloadFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("payload_detail_\(platform.rawValue).json")
+    }
+
     static func fetch(platform: Platform) async throws -> FetchOutcome {
         guard let cookie = CookieStore.load(for: platform), !cookie.isEmpty else {
             throw FetchError.noCookie
