@@ -141,9 +141,12 @@ enum PinduoduoParser {
 
         var title = ""
         var imageURL = ""
-        var shop = firstString(dict, ["mall_name", "mallName", "store_name", "storeName", "shop_name", "shopName"]) ?? ""
-        if shop.isEmpty, let mall = dict["mall"] as? [String: Any] {
-            shop = firstString(mall, ["mall_name", "mallName", "shop_name", "shopName"]) ?? ""
+        var shop = ""
+        if let mall = dict["mall"] as? [String: Any] {
+            shop = firstString(mall, ["mall_name", "mallName", "mall_title", "mallTitle", "shop_name", "shopName", "store_name", "storeName"]) ?? ""
+        }
+        if shop.isEmpty {
+            shop = firstString(dict, ["mall_name", "mallName", "store_name", "storeName", "shop_name", "shopName"]) ?? ""
         }
         for key in ["order_goods", "orderGoods", "goods", "goods_list", "goodsList", "order_goods_list", "orderGoodsList", "items", "goods_info"] {
             guard let arr = dict[key] as? [[String: Any]], let first = arr.first else { continue }

@@ -47,6 +47,16 @@ final class OrderStore {
         }
     }
 
+    /// 整平台替换：先清掉这个平台的旧记录，再写入本次抓到的。
+    /// 这样接口里已经消失的订单（比如以前兜底解析出来的假记录）不会一直赖着。
+    func replace(platform: Platform, with orders: [Order]) {
+        queue.sync {
+            guard let db else { return }
+            sqlite3_exec(db, "DELETE FROM orders WHERE platform = '\(platform.rawValue)';", nil, nil, nil)
+        }
+        upsert(orders)
+    }
+
     func upsert(_ orders: [Order]) {
         queue.sync {
             guard let db else { return }

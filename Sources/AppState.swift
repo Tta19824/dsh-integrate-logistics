@@ -67,7 +67,9 @@ final class AppState: ObservableObject {
         Task {
             do {
                 let outcome = try await OrderClient.fetch(platform: platform)
-                OrderStore.shared.upsert(outcome.orders)
+                if !outcome.orders.isEmpty {
+                    OrderStore.shared.replace(platform: platform, with: outcome.orders)
+                }
                 reload()
                 busy = nil
                 show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)")
@@ -91,7 +93,9 @@ final class AppState: ObservableObject {
                 busy = platform
                 do {
                     let outcome = try await OrderClient.fetch(platform: platform)
-                    OrderStore.shared.upsert(outcome.orders)
+                    if !outcome.orders.isEmpty {
+                        OrderStore.shared.replace(platform: platform, with: outcome.orders)
+                    }
                     lines.append("\(platform.name)：\(outcome.note)")
                 } catch {
                     lines.append("\(platform.name)：\(error.localizedDescription)")
