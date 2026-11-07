@@ -372,6 +372,9 @@ struct OrderDetailSheet: View {
                 return
             }
             raw = cap.text
+            // 详情页的接口数据存一份，方便「平台页 → 调试」里分享出来排查
+            let detailURL = OrderClient.detailPayloadFile(for: .pdd)
+            try? cap.payloadJSON.data(using: .utf8)?.write(to: detailURL, options: .atomic)
             let realShop = DetailParser.shopName(payloadJSON: cap.payloadJSON, text: cap.text)
             shop = realShop.isEmpty ? order.shopName : realShop
             pickup = DetailParser.pickupCode(from: cap.text)
