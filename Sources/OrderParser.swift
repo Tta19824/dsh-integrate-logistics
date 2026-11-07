@@ -297,37 +297,6 @@ enum PinduoduoParser {
     }
 }
 
-enum DetailParser {
-    /// 从订单详情页的文本里抠取件码，比如「取件码：8-2-1234」
-    static func pickupCode(from text: String) -> String {
-        let patterns = [
-            "(?:取件码|提货码|取货码|取件号)[^0-9A-Za-z\\-]{0,6}([0-9A-Za-z\\-]{3,14})",
-            "([0-9]{1,2}-[0-9]{1,2}-[0-9]{3,8})"
-        ]
-        for p in patterns {
-            if let hit = HTMLTools.firstMatch(p, in: text) {
-                return hit
-            }
-        }
-        return ""
-    }
-
-    /// 把详情页文本里像物流的几行挑出来
-    static func logisticsLines(from text: String) -> [String] {
-        let keys = ["已签收", "派送", "派件", "到达", "离开", "运输中", "揽收", "驿站", "快递柜", "代收点", "取件", "待取", "预计"]
-        var out: [String] = []
-        for raw in text.components(separatedBy: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if line.count < 4 || line.count > 60 { continue }
-            if keys.contains(where: { line.contains($0) }) {
-                if !out.contains(line) { out.append(line) }
-            }
-            if out.count >= 8 { break }
-        }
-        return out
-    }
-}
-
 struct TraceEntry: Identifiable {
     let id: Int
     let time: String
