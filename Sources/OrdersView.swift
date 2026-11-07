@@ -202,6 +202,7 @@ struct OrderDetailSheet: View {
     @State private var pickup = ""
     @State private var statusWord = ""
     @State private var trackingNo = ""
+    @State private var shop = ""
     @State private var trace: [TraceEntry] = []
     @State private var raw = ""
     @State private var showRaw = false
@@ -344,6 +345,11 @@ struct OrderDetailSheet: View {
             Text(order.title.isEmpty ? "（未识别商品名）" : order.title)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+            if !shop.isEmpty {
+                Text("店铺 \(shop)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Text("订单号 \(order.orderNo)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -366,6 +372,8 @@ struct OrderDetailSheet: View {
                 return
             }
             raw = cap.text
+            let realShop = DetailParser.shopName(payloadJSON: cap.payloadJSON, text: cap.text)
+            shop = realShop.isEmpty ? order.shopName : realShop
             pickup = DetailParser.pickupCode(from: cap.text)
             statusWord = DetailParser.statusWord(from: cap.text)
             trackingNo = DetailParser.trackingNumber(from: cap.text)

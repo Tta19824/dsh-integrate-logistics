@@ -129,10 +129,7 @@ enum OrderClient {
             throw FetchError.note("拼多多的登录态失效了。点「重新登录」时建议用扫码登录（不会把手机 App 顶下线），登录完再刷新订单。")
         }
 
-        var orders = attachLogistics(PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON), payloadJSON: capture.payloadJSON)
-        // 百亿补贴/品牌馆订单的店铺字段是品牌馆名（如「百亿补贴·宝格丽」），
-        // 真实商家只在订单详情页里，这里补抓几单把店铺名换成真的。
-        orders = await enrichShops(orders, cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader)
+        let orders = attachLogistics(PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON), payloadJSON: capture.payloadJSON)
 
         var note = info.entryCount > 0
             ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单"
@@ -147,25 +144,6 @@ enum OrderClient {
             rawFileURL: payloadFile(for: .pdd),
             note: note
         )
-    }
-
-    /// 给「店铺名不是真实商家」的订单补抓详情页，换上真实店铺名。最多补 3 单，避免刷新太慢。
-    private static func enrichShops(_ orders: [Order], cookie: String) async -> [Order] {
-        var result = orders
-        var budget = 3
-        for index in result.indices where budget > 0 {
-            let shop = result[index].shopName
-            let needsFix = shop.isEmpty || shop.hasPrefix("百亿补贴") || shop.hasPrefix("品牌馆")
-            guard needsFix else { continue }
-            budget -= 1
-            guard let capture = try? await WebOrderFetcher.shared.captureDetail(
-                orderNo: result[index].orderNo, cookieHeader: cookie) else { continue }
-            let real = DetailParser.shopName(payloadJSON: capture.payloadJSON, text: capture.text)
-            if !real.isEmpty {
-                result[index].shopName = real
-            }
-        }
-        return result
     }
 
     /// 直接请求同一个订单页，换三种 UA，看谁能让服务端直接吐出订单
