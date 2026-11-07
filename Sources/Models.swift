@@ -25,7 +25,7 @@ enum Platform: String, CaseIterable, Identifiable, Codable {
 
     var loginURL: URL {
         switch self {
-        case .pdd: return URL(string: "https://mobile.pinduoduo.com/login.html")!
+        case .pdd: return URL(string: "https://mobile.pinduoduo.com/login.html?from=https%3A%2F%2Fmobile.pinduoduo.com")!
         case .tb: return URL(string: "https://main.m.taobao.com/mytaobao/index.html")!
         case .jd: return URL(string: "https://plogin.m.jd.com/login/login")!
         }

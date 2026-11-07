@@ -18,7 +18,7 @@ struct WebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
-        webView.customUserAgent = desktop ? Self.desktopUA : Self.mobileUA
+        webView.customUserAgent = desktop ? Self.desktopUA : nil
         webView.load(URLRequest(url: url))
         return webView
     }
