@@ -189,6 +189,26 @@ struct OrderRow: View {
         }
         .frame(width: 68, height: 68)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(alignment: .topLeading) {
+            Text(order.platform.short)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 16, height: 16)
+                .background(platformColor, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .stroke(Color(.systemBackground), lineWidth: 1.5)
+                )
+                .offset(x: -4, y: -4)
+        }
+    }
+
+    private var platformColor: Color {
+        switch order.platform {
+        case .pdd: return Color(red: 0.90, green: 0.13, blue: 0.17)
+        case .tb: return Color(red: 1.00, green: 0.42, blue: 0.05)
+        case .jd: return Color(red: 0.90, green: 0.13, blue: 0.15)
+        }
     }
 
     private var thumbURL: URL? {
@@ -234,6 +254,10 @@ struct LogisticsSheet: View {
     @State private var mapHeight: CGFloat = 230
     @State private var dragStart: CGFloat?
 
+    private var brief: (title: String, subtitle: String) {
+        ShipTracking.summary(from: events.first?.desc ?? "")
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -242,7 +266,8 @@ struct LogisticsSheet: View {
                         path: path,
                         remaining: remaining,
                         truck: coordinates.last,
-                        caption: events.first?.desc ?? "当前位置"
+                        caption: brief.title,
+                        subcaption: brief.subtitle
                     )
                     .frame(height: mapHeight)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

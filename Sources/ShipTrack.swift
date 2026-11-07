@@ -65,6 +65,33 @@ enum ShipTracking {
     }
 
     /// 轨迹里出现的城市/区县名，按出现顺序，用来在地图上顺便把路线画出来。
+    /// 从一条轨迹描述里抽出「阶段 + 预计到达」，给地图气泡用。
+    /// 例如「运输中 预计明天送达 | 中通国际：【盘锦市】快件离开…」→ ("运输中 · 预计明天送达", "盘锦市")
+    static func summary(from desc: String) -> (title: String, subtitle: String) {
+        var stage = "运输中"
+        if desc.contains("派件") || desc.contains("派送") { stage = "派件中" }
+        else if desc.contains("已签收") || desc.contains("已送达") || desc.contains("代收") { stage = "已送达" }
+        else if desc.contains("揽收") || desc.contains("已发货") || desc.contains("已收件") { stage = "运输中" }
+
+        var eta = ""
+        if let regex = try? NSRegularExpression(pattern: "预计([^，。；、|]{1,8}?)送达"),
+           let match = regex.firstMatch(in: desc, range: NSRange(location: 0, length: (desc as NSString).length)),
+           match.numberOfRanges > 1 {
+            eta = "预计" + (desc as NSString).substring(with: match.range(at: 1)) + "送达"
+        }
+
+        var city = ""
+        if let regex = try? NSRegularExpression(pattern: "【([^】]{2,14})】"),
+           let match = regex.firstMatch(in: desc, range: NSRange(location: 0, length: (desc as NSString).length)),
+           match.numberOfRanges > 1 {
+            let raw = (desc as NSString).substring(with: match.range(at: 1))
+            if raw.hasSuffix("市") || raw.hasSuffix("县") || raw.hasSuffix("区") { city = raw }
+        }
+
+        let title = eta.isEmpty ? stage : stage + " · " + eta
+        return (title, city)
+    }
+
     /// 从物流 JSON 里找快递单号（运单号）。
     static func trackingNumber(from data: Data) -> String {
         guard let object = try? JSONSerialization.jsonObject(with: data) else { return "" }
@@ -185,6 +212,7 @@ struct RouteMapView: UIViewRepresentable {
     let remaining: [CLLocationCoordinate2D]
     let truck: CLLocationCoordinate2D?
     let caption: String
+    let subcaption: String
 
     func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
@@ -198,7 +226,7 @@ struct RouteMapView: UIViewRepresentable {
     func updateUIView(_ mapView: MKMapView, context: Context) {
         // 尺寸变化（拖拽调整高度）时 SwiftUI 会不停调用这里。
         // 数据没变就什么都不做，否则每一帧都拆重建覆盖层 + 重置镜头，帧率会掉到个位数。
-        let key = "\(path.count)|\(remaining.count)|\(truck?.latitude ?? 0)|\(truck?.longitude ?? 0)|\(caption)"
+        let key = "\(path.count)|\(remaining.count)|\(truck?.latitude ?? 0)|\(truck?.longitude ?? 0)|\(caption)|\(subcaption)"
         if context.coordinator.lastKey == key { return }
         context.coordinator.lastKey = key
 
@@ -239,13 +267,60 @@ struct RouteMapView: UIViewRepresentable {
             let pin = TruckAnnotation()
             pin.coordinate = truck
             pin.title = caption
+            pin.subtitle = subcaption
             mapView.addAnnotation(pin)
         }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(caption: caption) }
 
-    final class TruckAnnotation: MKPointAnnotation {}
+    final class TruckAnnotation: MKPointAnnotation {
+        var subtitleText = ""
+    }
+
+    /// 地图上那个绿色小气泡：圆角框 + 两行白字。
+    final class TruckBubbleView: MKAnnotationView {
+        private let box = UIView()
+        private let label = UILabel()
+
+        override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+            super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+            backgroundColor = .clear
+            canShowCallout = false
+            isEnabled = false
+
+            box.backgroundColor = UIColor.systemGreen
+            box.layer.cornerRadius = 11
+            box.layer.masksToBounds = true
+            box.layer.borderWidth = 2
+            box.layer.borderColor = UIColor.white.withAlphaComponent(0.9).cgColor
+            addSubview(box)
+
+            label.numberOfLines = 2
+            label.textAlignment = .center
+            label.textColor = .white
+            label.font = .systemFont(ofSize: 11, weight: .semibold)
+            box.addSubview(label)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        func apply(title: String, subtitle: String) {
+            label.text = subtitle.isEmpty ? title : title + "\n" + subtitle
+            label.sizeToFit()
+
+            let padding = CGSize(width: 10, height: 6)
+            var size = label.bounds.size
+            size.width = min(size.width, 200)
+            size.height = label.bounds.height
+            let boxSize = CGSize(width: size.width + padding.width * 2, height: size.height + padding.height * 2)
+
+            label.frame = CGRect(x: padding.width, y: padding.height, width: size.width, height: size.height)
+            box.frame = CGRect(origin: .zero, size: boxSize)
+            frame = CGRect(origin: frame.origin, size: boxSize)
+            centerOffset = CGPoint(x: 0, y: -boxSize.height / 2 - 6)
+        }
+    }
 
     final class Coordinator: NSObject, MKMapViewDelegate {
         let caption: String
@@ -271,14 +346,12 @@ struct RouteMapView: UIViewRepresentable {
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             guard annotation is TruckAnnotation else { return nil }
-            let id = "truck"
-            let view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKMarkerAnnotationView
-                ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: id)
+            let id = "truckBubble"
+            let view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? TruckBubbleView
+                ?? TruckBubbleView(annotation: annotation, reuseIdentifier: id)
             view.annotation = annotation
-            view.markerTintColor = .systemGreen
-            view.glyphImage = UIImage(systemName: "truck.box.fill")
             view.displayPriority = .required
-            view.canShowCallout = true
+            view.apply(title: caption, subtitle: subcaption)
             return view
         }
     }
