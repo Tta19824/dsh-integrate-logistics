@@ -143,10 +143,12 @@ enum OrderClient {
         var orders = attachLogistics(PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON), payloadJSON: capture.payloadJSON)
         // 列表卡片上直接带着取件码 / 最新物流，不用再点进详情页
         orders = PinduoduoParser.applyCards(orders, cardsJSON: capture.cardsJSON)
+        // 列表页上没有取件码，直接按订单号问物流接口（只问还在路上的那几单）
+        orders = await enrichShipping(orders, cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader)
 
-        let cardCount = (capture.cardsJSON.components(separatedBy: "\"sn\":").count - 1)
+        let pickupCount = orders.filter { !$0.pickupCode.isEmpty }.count
         var note = info.entryCount > 0
-            ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单，卡片 \(cardCount) 张"
+            ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单，取件码 \(pickupCount) 单"
             : "没抓到接口响应，页面文本 \(info.textChars) 字"
         if orders.isEmpty, !info.snippet.isEmpty { note += "；页面开头：\(info.snippet.prefix(60))" }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
@@ -220,6 +222,24 @@ enum OrderClient {
             copy.logistics = String(info.prefix(80))
             return copy
         }
+    }
+
+    /// 对还在运输中的订单补物流信息（快递公司、最新轨迹、取件码）。
+    private static func enrichShipping(_ orders: [Order], cookie: String) async -> [Order] {
+        guard !cookie.isEmpty else { return orders }
+        var result = orders
+        var budget = 3
+        for index in result.indices {
+            guard budget > 0 else { break }
+            let order = result[index]
+            guard order.status == .shipped, order.pickupCode.isEmpty else { continue }
+            budget -= 1
+            guard let ship = await ShippingClient.fetch(orderNo: order.orderNo, cookieHeader: cookie) else { continue }
+            if !ship.carrier.isEmpty { result[index].carrier = ship.carrier }
+            if !ship.pickup.isEmpty { result[index].pickupCode = ship.pickup }
+            if !ship.logistics.isEmpty { result[index].logistics = ship.logistics }
+        }
+        return result
     }
 
     private static func shortPath(_ path: String) -> String {
