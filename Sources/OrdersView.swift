@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct OrdersView: View {
     @EnvironmentObject private var app: AppState
@@ -69,74 +70,75 @@ struct OrderRow: View {
     let order: Order
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
                 Text(order.platform.short)
                     .font(.caption2.bold())
                     .foregroundStyle(.white)
-                    .frame(width: 20, height: 20)
+                    .frame(width: 22, height: 22)
                     .background(platformColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
-                Text(order.title.isEmpty ? "（未识别商品名）" : order.title)
-                    .font(.subheadline)
-                    .lineLimit(2)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(order.title.isEmpty ? "（未识别商品名）" : order.title)
+                        .font(.subheadline)
+                        .lineLimit(2)
+
+                    HStack(spacing: 6) {
+                        if !order.orderTime.isEmpty {
+                            Image(systemName: "clock")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                            Text(order.orderTime)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
 
                 Spacer(minLength: 0)
 
-                if !order.amount.isEmpty {
-                    Text("¥\(order.amount)")
-                        .font(.subheadline.monospacedDigit())
-                }
-            }
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text(order.statusRaw.isEmpty ? order.status.label : order.statusRaw)
+                        .font(.caption)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(statusColor.opacity(0.14))
+                        .foregroundStyle(statusColor)
+                        .clipShape(Capsule())
 
-            HStack(spacing: 6) {
-                Label(order.status.label, systemImage: order.status.symbol)
-                    .font(.caption)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(statusColor.opacity(0.15))
-                    .foregroundStyle(statusColor)
-                    .clipShape(Capsule())
-
-                if !order.statusRaw.isEmpty {
-                    Text(order.statusRaw)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                if !order.orderTime.isEmpty {
-                    Text(order.orderTime)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if !order.orderNo.isEmpty {
-                Text("订单号 \(order.orderNo)")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-
-            if !order.shopName.isEmpty || !order.logistics.isEmpty {
-                HStack(spacing: 8) {
-                    if !order.shopName.isEmpty {
-                        Text(order.shopName)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    if !order.logistics.isEmpty {
-                        Text(order.logistics)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                    if !order.amount.isEmpty {
+                        Text("¥\(order.amount)")
+                            .font(.subheadline.monospacedDigit())
                     }
                 }
             }
+
+            if !order.logistics.isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "truck.box")
+                        .font(.system(size: 13))
+                        .foregroundStyle(statusColor)
+                        .frame(width: 22, height: 18)
+                    Text(order.logistics)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
+            Text("订单号 \(order.orderNo)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 
     private var platformColor: Color {
@@ -166,57 +168,104 @@ struct OrderDetailSheet: View {
     @State private var loading = true
     @State private var message = ""
     @State private var pickup = ""
-    @State private var lines: [String] = []
+    @State private var statusWord = ""
+    @State private var trackingNo = ""
+    @State private var trace: [TraceEntry] = []
     @State private var raw = ""
     @State private var showRaw = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 18) {
                     header
+
                     if loading {
                         HStack(spacing: 8) {
                             ProgressView()
                             Text("正在打开订单页…").font(.footnote).foregroundStyle(.secondary)
                         }
+                    } else if !message.isEmpty {
+                        Text(message).font(.footnote).foregroundStyle(.secondary)
                     }
-                    if !message.isEmpty {
-                        Text(message)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
+
                     if !pickup.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("取件码").font(.caption).foregroundStyle(.secondary)
                             Text(pickup)
                                 .font(.system(size: 34, weight: .bold, design: .rounded))
                                 .monospacedDigit()
+                            Text("到驿站报这个码取件")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
                         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    if !lines.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("物流").font(.caption).foregroundStyle(.secondary)
-                            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                                HStack(alignment: .top, spacing: 6) {
-                                    Image(systemName: "circle.fill")
-                                        .font(.system(size: 5))
-                                        .padding(.top, 5)
-                                        .foregroundStyle(.secondary)
-                                    Text(line).font(.footnote)
+
+                    if !trace.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(trace.enumerated()), id: \.element.id) { index, item in
+                                HStack(alignment: .top, spacing: 10) {
+                                    VStack(spacing: 0) {
+                                        Circle()
+                                            .fill(index == 0 ? Color.green : Color(.systemGray4))
+                                            .frame(width: index == 0 ? 9 : 7, height: index == 0 ? 9 : 7)
+                                            .padding(.top, 4)
+                                        if index != trace.count - 1 {
+                                            Rectangle()
+                                                .fill(Color(.systemGray5))
+                                                .frame(width: 1)
+                                                .frame(maxHeight: .infinity)
+                                        }
+                                    }
+                                    .frame(width: 10)
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(item.time)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .monospacedDigit()
+                                        Text(item.text)
+                                            .font(index == 0 ? .footnote.weight(.medium) : .footnote)
+                                            .foregroundStyle(index == 0 ? Color.primary : Color.secondary)
+                                    }
+                                    .padding(.bottom, 14)
+                                    Spacer(minLength: 0)
                                 }
                             }
                         }
                     }
+
+                    if !trackingNo.isEmpty || !order.shopName.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            if !order.shopName.isEmpty {
+                                row("店铺", order.shopName)
+                            }
+                            if !trackingNo.isEmpty {
+                                HStack {
+                                    row("快递单号", trackingNo)
+                                    Button {
+                                        UIPasteboard.general.string = trackingNo
+                                    } label: {
+                                        Image(systemName: "doc.on.doc")
+                                    }
+                                    .buttonStyle(.borderless)
+                                }
+                            }
+                        }
+                        .padding(12)
+                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+
                     if !raw.isEmpty {
                         DisclosureGroup("页面原文", isExpanded: $showRaw) {
                             Text(raw)
                                 .font(.caption2)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 6)
                         }
                         .font(.footnote)
                     }
@@ -234,17 +283,33 @@ struct OrderDetailSheet: View {
         }
     }
 
+    private func row(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 56, alignment: .leading)
+            Text(value)
+                .font(.caption)
+                .textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
+    }
+
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(order.title.isEmpty ? "（未识别商品名）" : order.title).font(.headline)
-            HStack(spacing: 8) {
-                Text(order.statusRaw.isEmpty ? order.status.label : order.statusRaw)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(statusWord.isEmpty ? (order.statusRaw.isEmpty ? order.status.label : order.statusRaw) : statusWord)
+                    .font(.title3.bold())
+                Spacer()
                 if !order.amount.isEmpty {
-                    Text("¥\(order.amount)").font(.caption).foregroundStyle(.secondary)
+                    Text("¥\(order.amount)")
+                        .font(.headline.monospacedDigit())
                 }
             }
+            Text(order.title.isEmpty ? "（未识别商品名）" : order.title)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
             Text("订单号 \(order.orderNo)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -268,8 +333,10 @@ struct OrderDetailSheet: View {
             }
             raw = cap.text
             pickup = DetailParser.pickupCode(from: cap.text)
-            lines = DetailParser.logisticsLines(from: cap.text)
-            if lines.isEmpty && pickup.isEmpty {
+            statusWord = DetailParser.statusWord(from: cap.text)
+            trackingNo = DetailParser.trackingNumber(from: cap.text)
+            trace = DetailParser.trace(from: cap.text)
+            if trace.isEmpty && pickup.isEmpty {
                 message = "没读到物流信息，可能这单还没发货，或者页面结构变了"
             }
         } catch {
