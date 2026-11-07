@@ -36,7 +36,7 @@ enum ShippingClient {
             info.pickup = DetailParser.pickupCode(from: String(data: data, encoding: .utf8) ?? "")
         }
         if info.carrier.isEmpty {
-            info.carrier = DetailParser.carrierName(from: String(data: data, encoding: .utf8) ?? "") ?? ""
+            info.carrier = PinduoduoParser.carrierName(from: String(data: data, encoding: .utf8) ?? "") ?? ""
         }
         if info.carrier.isEmpty && info.pickup.isEmpty && info.logistics.isEmpty { return nil }
         return info
