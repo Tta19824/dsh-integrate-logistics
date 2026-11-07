@@ -45,7 +45,7 @@ struct OrdersView: View {
     private var orderList: some View {
         List {
             ForEach(activeOrders) { order in
-                OrderRow(order: order)
+                OrderRow(order: order) { selected = order }
             }
         }
         .listStyle(.plain)
@@ -69,6 +69,7 @@ struct OrdersView: View {
 
 struct OrderRow: View {
     let order: Order
+    var onLogisticsTap: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -145,7 +146,7 @@ struct OrderRow: View {
             }
 
             if !order.logistics.isEmpty {
-                Button { selected = order } label: {
+                Button { onLogisticsTap() } label: {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "truck.box")
                         .font(.system(size: 13))
