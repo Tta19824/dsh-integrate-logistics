@@ -65,6 +65,53 @@ enum ShipTracking {
     }
 
     /// 轨迹里出现的城市/区县名，按出现顺序，用来在地图上顺便把路线画出来。
+    /// 从物流 JSON 里找快递单号（运单号）。
+    static func trackingNumber(from data: Data) -> String {
+        guard let object = try? JSONSerialization.jsonObject(with: data) else { return "" }
+        let keys = ["tracking_number", "trackingNumber", "express_no", "expressNo", "mail_no", "mailNo", "waybill_no", "waybillNo", "waybill"]
+        if let hit = firstString(in: object, keys: keys), hit.count >= 6 { return hit }
+        let text = String(data: data, encoding: .utf8) ?? ""
+        let pattern = "[A-Za-z]{0,4}[0-9]{10,20}"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return "" }
+        let ns = text as NSString
+        if let match = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) {
+            return ns.substring(with: match.range)
+        }
+        return ""
+    }
+
+    /// 从物流 JSON 里找收件地址（用来算「还没走完的那一段」）。
+    static func destination(from data: Data) -> String {
+        guard let object = try? JSONSerialization.jsonObject(with: data) else { return "" }
+        let keys = ["receiver_address", "receive_address", "receiverAddress", "receiveAddress", "receiver_addr", "address", "addr"]
+        if let hit = firstString(in: object, keys: keys), hit.contains("省") || hit.contains("市") { return hit }
+        let text = String(data: data, encoding: .utf8) ?? ""
+        let pattern = "([\u4e00-\u9fa5]{2,8}省[^\"]{4,60}|[\u4e00-\u9fa5]{2,8}市[^\"]{4,60})"
+        if let regex = try? NSRegularExpression(pattern: pattern),
+           let match = regex.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)) {
+            return (text as NSString).substring(with: match.range)
+        }
+        return ""
+    }
+
+    private static func firstString(in object: Any, keys: [String]) -> String? {
+        if let dict = object as? [String: Any] {
+            for key in keys {
+                if let value = dict[key] as? String, !value.trimmingCharacters(in: .whitespaces).isEmpty {
+                    return value
+                }
+            }
+            for value in dict.values {
+                if let hit = firstString(in: value, keys: keys) { return hit }
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                if let hit = firstString(in: value, keys: keys) { return hit }
+            }
+        }
+        return nil
+    }
+
     static func placeNames(in events: [ShipEvent]) -> [String] {
         var names: [String] = []
         var seen = Set<String>()
@@ -135,6 +182,7 @@ enum RoutePlanner {
 
 struct RouteMapView: UIViewRepresentable {
     let path: [CLLocationCoordinate2D]
+    let remaining: [CLLocationCoordinate2D]
     let truck: CLLocationCoordinate2D?
     let caption: String
 
@@ -150,18 +198,31 @@ struct RouteMapView: UIViewRepresentable {
     func updateUIView(_ mapView: MKMapView, context: Context) {
         mapView.removeOverlays(mapView.overlays)
         mapView.removeAnnotations(mapView.annotations)
+        context.coordinator.remainingLine = nil
 
-        guard !path.isEmpty else { return }
+        guard !path.isEmpty || !remaining.isEmpty else { return }
+
+        if remaining.count > 1 {
+            let rest = MKPolyline(coordinates: remaining, count: remaining.count)
+            context.coordinator.remainingLine = rest
+            mapView.addOverlay(rest)
+        }
 
         if path.count > 1 {
             let line = MKPolyline(coordinates: path, count: path.count)
             mapView.addOverlay(line)
+        }
+
+        let box = mapView.overlays.reduce(MKMapRect.null) { partial, overlay in
+            partial.union(overlay.boundingMapRect)
+        }
+        if !box.isNull && !box.isEmpty {
             mapView.setVisibleMapRect(
-                line.boundingMapRect,
-                edgePadding: UIEdgeInsets(top: 46, left: 34, bottom: 34, right: 34),
+                box,
+                edgePadding: UIEdgeInsets(top: 52, left: 36, bottom: 36, right: 36),
                 animated: false
             )
-        } else if let only = path.first {
+        } else if let only = (path.first ?? remaining.first) {
             mapView.setRegion(
                 MKCoordinateRegion(center: only, latitudinalMeters: 90000, longitudinalMeters: 90000),
                 animated: false
@@ -182,17 +243,23 @@ struct RouteMapView: UIViewRepresentable {
 
     final class Coordinator: NSObject, MKMapViewDelegate {
         let caption: String
+        var remainingLine: MKPolyline?
         init(caption: String) { self.caption = caption }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
-            if let line = overlay as? MKPolyline {
-                let renderer = MKPolylineRenderer(polyline: line)
+            guard let line = overlay as? MKPolyline else { return MKOverlayRenderer(overlay: overlay) }
+            let renderer = MKPolylineRenderer(polyline: line)
+            if let remaining = remainingLine, remaining === line {
+                renderer.strokeColor = UIColor.systemGray.withAlphaComponent(0.55)
+                renderer.lineWidth = 4
+                renderer.lineCap = .round
+                renderer.lineDashPattern = [6, 6]
+            } else {
                 renderer.strokeColor = UIColor.systemGreen
                 renderer.lineWidth = 5
                 renderer.lineCap = .round
-                return renderer
             }
-            return MKOverlayRenderer(overlay: overlay)
+            return renderer
         }
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {

@@ -226,24 +226,36 @@ struct LogisticsSheet: View {
     @State private var events: [ShipEvent] = []
     @State private var coordinates: [CLLocationCoordinate2D] = []
     @State private var path: [CLLocationCoordinate2D] = []
+    @State private var remaining: [CLLocationCoordinate2D] = []
+    @State private var tracking = ""
     @State private var loading = true
     @State private var message = ""
+
+    @State private var mapHeight: CGFloat = 230
+    @State private var dragStart: CGFloat?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if !coordinates.isEmpty {
-                        RouteMapView(path: path, truck: coordinates.last, caption: events.first?.desc ?? "当前位置")
-                            .frame(height: 230)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .padding(.horizontal, 16)
-                            .padding(.top, 12)
+                    if !coordinates.isEmpty || !remaining.isEmpty {
+                        RouteMapView(
+                            path: path,
+                            remaining: remaining,
+                            truck: coordinates.last,
+                            caption: events.first?.desc ?? "当前位置"
+                        )
+                        .frame(height: mapHeight)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+
+                        mapGrabber
                     }
 
-                    orderNoRow
+                    trackingRow
                         .padding(.horizontal, 16)
-                        .padding(.top, 14)
+                        .padding(.top, 12)
 
                     if loading {
                         HStack(spacing: 8) {
@@ -305,24 +317,49 @@ struct LogisticsSheet: View {
         }
     }
 
-    private var orderNoRow: some View {
+    /// 地图下沿的小横条：按住上下拖，调地图高度。
+    private var mapGrabber: some View {
+        HStack {
+            Spacer()
+            Capsule()
+                .fill(Color(.systemGray4))
+                .frame(width: 44, height: 5)
+            Spacer()
+        }
+        .frame(height: 26)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    if dragStart == nil { dragStart = mapHeight }
+                    let base = dragStart ?? mapHeight
+                    mapHeight = min(max(base - value.translation.height, 140), 560)
+                }
+                .onEnded { _ in dragStart = nil }
+        )
+        .accessibilityLabel("拖动调整地图大小")
+    }
+
+    private var trackingRow: some View {
         HStack(spacing: 8) {
-            Text("订单号")
+            Text("快递单号")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(order.orderNo)
+            Text(tracking.isEmpty ? "暂未获取" : tracking)
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(.primary)
+                .foregroundStyle(tracking.isEmpty ? .secondary : .primary)
                 .textSelection(.enabled)
             Spacer(minLength: 8)
-            Button {
-                UIPasteboard.general.string = order.orderNo
-            } label: {
-                Image(systemName: "doc.on.doc")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if !tracking.isEmpty {
+                Button {
+                    UIPasteboard.general.string = tracking
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -336,8 +373,11 @@ struct LogisticsSheet: View {
             return
         }
 
+        var address = ""
         if let result = await ShippingClient.track(orderNo: order.orderNo, cookieHeader: cookie) {
             events = result.events
+            tracking = result.tracking
+            address = result.address
         }
 
         if events.isEmpty {
@@ -345,19 +385,32 @@ struct LogisticsSheet: View {
                 events = DetailParser.trace(from: capture.text).map {
                     ShipEvent(id: $0.id, time: $0.time, desc: $0.text)
                 }
+                if tracking.isEmpty {
+                    tracking = DetailParser.trackingNumber(from: capture.text)
+                }
+                if address.isEmpty {
+                    address = ShipTracking.destination(from: Data(capture.text.utf8))
+                }
             }
         }
 
         if events.isEmpty {
             message = "没读到轨迹，可能这单还没发出"
-        } else {
-            let names = ShipTracking.placeNames(in: events)
-            if !names.isEmpty {
-                coordinates = await ShipTracking.coordinates(for: names)
-                if !coordinates.isEmpty {
-                    loading = false
-                    path = await RoutePlanner.path(through: coordinates)
-                }
+            loading = false
+            return
+        }
+
+        let names = ShipTracking.placeNames(in: events)
+        if !names.isEmpty {
+            coordinates = await ShipTracking.coordinates(for: names)
+        }
+        if !coordinates.isEmpty {
+            loading = false
+            path = await RoutePlanner.path(through: coordinates)
+
+            if !address.isEmpty,
+               let target = await ShipTracking.coordinates(for: [address]).first {
+                remaining = await RoutePlanner.path(through: [coordinates.last!, target])
             }
         }
         loading = false

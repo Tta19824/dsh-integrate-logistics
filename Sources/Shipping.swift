@@ -81,7 +81,14 @@ enum ShippingClient {
     }
 
     /// 拉一份原始物流 JSON，顺带把轨迹解析好。
-    static func track(orderNo: String, cookieHeader: String) async -> (events: [ShipEvent], data: Data)? {
+    struct TrackResult {
+        var events: [ShipEvent]
+        var data: Data
+        var tracking: String
+        var address: String
+    }
+
+    static func track(orderNo: String, cookieHeader: String) async -> TrackResult? {
         guard let uid = userID(from: cookieHeader), !uid.isEmpty else { return nil }
         let encoded = orderNo.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? orderNo
         let raw = "https://mobile.pinduoduo.com/proxy/api/order/\(encoded)/shipping?pdduid=\(uid)&query_type=2"
@@ -96,6 +103,11 @@ enum ShippingClient {
         request.setValue("https://mobile.pinduoduo.com/order.html", forHTTPHeaderField: "Referer")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-        return (ShipTracking.events(from: data), data)
+        return TrackResult(
+            events: ShipTracking.events(from: data),
+            data: data,
+            tracking: ShipTracking.trackingNumber(from: data),
+            address: ShipTracking.destination(from: data)
+        )
     }
 }
