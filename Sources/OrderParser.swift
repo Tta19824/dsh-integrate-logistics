@@ -330,7 +330,7 @@ enum DetailParser {
                 if let hit = findShop(in: obj) { return hit }
             }
         }
-        return firstMatch("([\u4e00-\u9fa5A-Za-z0-9（）()·]{2,18}(?:专营店|专卖店|旗舰店|官方店|品牌店))", in: text) ?? ""
+        return firstMatch("([\\u4e00-\\u9fa5A-Za-z0-9（）()·]{2,18}(?:专营店|专卖店|旗舰店|官方店|品牌店))", in: text) ?? ""
     }
 
     private static func findShop(in obj: Any) -> String? {
