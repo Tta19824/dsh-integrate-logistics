@@ -40,16 +40,35 @@ struct LoginSheet: View {
     let platform: Platform
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var app: AppState
+    @State private var desktop = false
+
+    private var currentURL: URL {
+        if desktop, platform == .pdd, let url = URL(string: "https://www.pinduoduo.com/") {
+            return url
+        }
+        return platform.loginURL
+    }
 
     var body: some View {
         NavigationStack {
-            WebView(url: platform.loginURL)
+            WebView(url: currentURL, desktop: desktop)
+                .id(desktop)
                 .ignoresSafeArea(edges: .bottom)
                 .navigationTitle("\(platform.name) 登录")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("取消") { dismiss() }
+                    }
+                    if platform == .pdd {
+                        ToolbarItem(placement: .principal) {
+                            Picker("", selection: $desktop) {
+                                Text("手机版").tag(false)
+                                Text("电脑版").tag(true)
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 150)
+                        }
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("完成") {
