@@ -5,21 +5,68 @@ import WebKit
 struct WebView: UIViewRepresentable {
     let url: URL
     var desktop: Bool = false
+    /// 打开前先清掉这些域名下的 cookie（登录页要干净的环境才会给扫码）
+    var clearDomains: [String] = []
+    /// 自动点「扫码登录」那个标签页
+    var autoQR: Bool = false
     var onFinish: ((WKNavigation?) -> Void)?
 
     private static let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     private static let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
+    private static let qrTabScript = """
+    (function(){
+      var tries = 0;
+      function isQR(t){
+        t = (t || '').trim();
+        return t === '扫码登录' || t === '扫一扫登录' || t === '扫码';
+      }
+      function tick(){
+        tries++;
+        var els = document.querySelectorAll('div,span,a,button,li,p');
+        for (var i = 0; i < els.length; i++) {
+          var el = els[i];
+          if (el.children.length > 2) continue;
+          if (isQR(el.textContent)) { try { el.click(); } catch (e) {} return true; }
+        }
+        return false;
+      }
+      var id = setInterval(function(){
+        if (tick() || tries > 25) clearInterval(id);
+      }, 400);
+    })();
+    """
+
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
         config.allowsInlineMediaPlayback = true
+        if autoQR {
+            config.userContentController.addUserScript(
+                WKUserScript(source: Self.qrTabScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+            )
+        }
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.customUserAgent = desktop ? Self.desktopUA : nil
-        webView.load(URLRequest(url: url))
+
+        if clearDomains.isEmpty {
+            webView.load(URLRequest(url: url))
+        } else {
+            let store = WKWebsiteDataStore.default()
+            store.httpCookieStore.getAllCookies { cookies in
+                let group = DispatchGroup()
+                for cookie in cookies where clearDomains.contains(where: { cookie.domain.contains($0) }) {
+                    group.enter()
+                    store.httpCookieStore.delete(cookie) { group.leave() }
+                }
+                group.notify(queue: .main) {
+                    webView.load(URLRequest(url: url))
+                }
+            }
+        }
         return webView
     }
 

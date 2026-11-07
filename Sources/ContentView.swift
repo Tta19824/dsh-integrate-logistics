@@ -51,8 +51,13 @@ struct LoginSheet: View {
 
     var body: some View {
         NavigationStack {
-            WebView(url: currentURL, desktop: desktop)
-                .id(desktop)
+            WebView(
+                url: currentURL,
+                desktop: desktop,
+                clearDomains: platform == .pdd && !desktop ? ["pinduoduo.com", "yangkeduo.com"] : [],
+                autoQR: platform == .pdd && !desktop
+            )
+            .id(desktop)
                 .ignoresSafeArea(edges: .bottom)
                 .navigationTitle("\(platform.name) 登录")
                 .navigationBarTitleDisplayMode(.inline)
