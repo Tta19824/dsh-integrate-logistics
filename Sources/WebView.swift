@@ -21,14 +21,25 @@ struct WebView: UIViewRepresentable {
         t = (t || '').trim();
         return t === '扫码登录' || t === '扫一扫登录' || t === '扫码';
       }
-      function tick(){
-        tries++;
+      function byText(){
         var els = document.querySelectorAll('div,span,a,button,li,p');
         for (var i = 0; i < els.length; i++) {
           var el = els[i];
           if (el.children.length > 2) continue;
           if (isQR(el.textContent)) { try { el.click(); } catch (e) {} return true; }
         }
+        return false;
+      }
+      function byClass(){
+        var el = document.querySelector('[class*="qr"],[id*="qr"],[class*="Qr"],[class*="QR"]');
+        if (!el) return false;
+        try { el.click(); } catch (e) { return false; }
+        return true;
+      }
+      function tick(){
+        tries++;
+        if (byText()) return true;
+        if (tries > 6 && byClass()) return true;
         return false;
       }
       var id = setInterval(function(){
@@ -88,7 +99,8 @@ struct WebView: UIViewRepresentable {
             onFinish?(navigation)
         }
 
-        /// 页面里点「打开拼多多 App」是自定义 scheme，WebView 自己打不开，得交给系统跳转
+        /// 页面里跳 `pinduoduo://` 之类的自定义 scheme：直接取消，**不**交给系统打开。
+        /// 交给系统的话会被踹到拼多多 App 里愣在首页，登录页反而没了。
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,
@@ -97,9 +109,7 @@ struct WebView: UIViewRepresentable {
             if let url = navigationAction.request.url,
                let scheme = url.scheme?.lowercased(),
                !["http", "https", "about", "data", "javascript", "file", "blob"].contains(scheme) {
-                UIApplication.shared.open(url, options: [:]) { ok in
-                    NSLog("[web] open external \(scheme) -> \(ok)")
-                }
+                NSLog("[web] blocked external scheme \(scheme)")
                 decisionHandler(.cancel)
                 return
             }
