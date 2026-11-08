@@ -67,7 +67,7 @@ enum ShipTracking {
     /// 轨迹里出现的城市/区县名，按出现顺序，用来在地图上顺便把路线画出来。
     /// 从一条轨迹描述里抽出「阶段 + 预计到达」，给地图气泡用。
     /// 例如「运输中 预计明天送达 | 中通国际：【盘锦市】快件离开…」→ ("运输中 · 预计明天送达", "盘锦市")
-    static func summary(from desc: String) -> (title: String, subtitle: String) {
+    static func summary(from desc: String) -> (title: String, subtitle: String, stage: String, eta: String) {
         var stage = "运输中"
         if desc.contains("派件") || desc.contains("派送") { stage = "派件中" }
         else if desc.contains("已签收") || desc.contains("已送达") || desc.contains("代收") { stage = "已送达" }
@@ -88,8 +88,8 @@ enum ShipTracking {
             if raw.hasSuffix("市") || raw.hasSuffix("县") || raw.hasSuffix("区") { city = raw }
         }
 
-        let title = eta.isEmpty ? stage : stage + " · " + eta
-        return (title, city)
+        let title = eta.isEmpty ? stage : eta
+        return (title, city, stage, eta)
     }
 
     /// 从物流 JSON 里找快递单号（运单号）。
@@ -278,10 +278,16 @@ struct RouteMapView: UIViewRepresentable {
         var subtitleText = ""
     }
 
-    /// 地图上那个绿色小气泡：圆角框 + 两行白字。
-    final class TruckBubbleView: MKAnnotationView {
+    /// 地图标记：上面一个绿色圆点（里面小货车），下面挂一个圆角矩形写预计时间。
+    final class TruckPinView: MKAnnotationView {
+        private let badge = UIView()
+        private let icon = UIImageView(image: UIImage(systemName: "truck.box.fill"))
         private let box = UIView()
         private let label = UILabel()
+
+        private let badgeSize: CGFloat = 34
+        private let boxHeight: CGFloat = 26
+        private let gap: CGFloat = 5
 
         override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
             super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
@@ -289,36 +295,56 @@ struct RouteMapView: UIViewRepresentable {
             canShowCallout = false
             isEnabled = false
 
-            box.backgroundColor = UIColor.systemGreen
-            box.layer.cornerRadius = 11
-            box.layer.masksToBounds = true
-            box.layer.borderWidth = 2
-            box.layer.borderColor = UIColor.white.withAlphaComponent(0.9).cgColor
+            badge.backgroundColor = UIColor.systemGreen
+            badge.layer.cornerRadius = badgeSize / 2
+            badge.layer.borderWidth = 2.5
+            badge.layer.borderColor = UIColor.white.cgColor
+            badge.layer.shadowColor = UIColor.black.cgColor
+            badge.layer.shadowOpacity = 0.18
+            badge.layer.shadowRadius = 3
+            badge.layer.shadowOffset = CGSize(width: 0, height: 1)
+            addSubview(badge)
+
+            icon.contentMode = .scaleAspectFit
+            icon.tintColor = .white
+            badge.addSubview(icon)
+
+            box.backgroundColor = UIColor.white
+            box.layer.cornerRadius = 9
+            box.layer.borderWidth = 1
+            box.layer.borderColor = UIColor.systemGreen.withAlphaComponent(0.35).cgColor
+            box.layer.shadowColor = UIColor.black.cgColor
+            box.layer.shadowOpacity = 0.10
+            box.layer.shadowRadius = 3
+            box.layer.shadowOffset = CGSize(width: 0, height: 1)
             addSubview(box)
 
-            label.numberOfLines = 2
-            label.textAlignment = .center
-            label.textColor = .white
             label.font = .systemFont(ofSize: 11, weight: .semibold)
+            label.textColor = UIColor.systemGreen
+            label.textAlignment = .center
+            label.numberOfLines = 1
             box.addSubview(label)
         }
 
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-        func apply(title: String, subtitle: String) {
-            label.text = subtitle.isEmpty ? title : title + "\n" + subtitle
+        func apply(text: String) {
+            label.text = text
             label.sizeToFit()
 
-            let padding = CGSize(width: 10, height: 6)
-            var size = label.bounds.size
-            size.width = min(size.width, 200)
-            size.height = label.bounds.height
-            let boxSize = CGSize(width: size.width + padding.width * 2, height: size.height + padding.height * 2)
+            let boxWidth = min(label.bounds.width + 18, 190)
+            label.frame = CGRect(x: 9, y: (boxHeight - label.bounds.height) / 2, width: boxWidth - 18, height: label.bounds.height)
 
-            label.frame = CGRect(x: padding.width, y: padding.height, width: size.width, height: size.height)
-            box.frame = CGRect(origin: .zero, size: boxSize)
-            frame = CGRect(origin: frame.origin, size: boxSize)
-            centerOffset = CGPoint(x: 0, y: -boxSize.height / 2 - 6)
+            let width = max(boxWidth, badgeSize)
+            let height = badgeSize + gap + boxHeight
+            frame = CGRect(origin: frame.origin, size: CGSize(width: width, height: height))
+
+            badge.frame = CGRect(x: (width - badgeSize) / 2, y: 0, width: badgeSize, height: badgeSize)
+            icon.frame = CGRect(x: 8, y: 8, width: badgeSize - 16, height: badgeSize - 16)
+            box.frame = CGRect(x: (width - boxWidth) / 2, y: badgeSize + gap, width: boxWidth, height: boxHeight)
+
+            // 让绿色圆点的中心正好压在地理坐标上，矩形从它下方伸出来。
+            centerOffset = CGPoint(x: 0, y: height / 2 - badgeSize / 2)
         }
     }
 
@@ -350,12 +376,12 @@ struct RouteMapView: UIViewRepresentable {
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             guard annotation is TruckAnnotation else { return nil }
-            let id = "truckBubble"
-            let view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? TruckBubbleView
-                ?? TruckBubbleView(annotation: annotation, reuseIdentifier: id)
+            let id = "truckPin"
+            let view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? TruckPinView
+                ?? TruckPinView(annotation: annotation, reuseIdentifier: id)
             view.annotation = annotation
             view.displayPriority = .required
-            view.apply(title: caption, subtitle: subcaption)
+            view.apply(text: caption)
             return view
         }
     }
