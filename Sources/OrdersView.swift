@@ -74,34 +74,14 @@ struct OrderRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
                 thumbnail
 
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(order.title.isEmpty ? "（未识别商品名）" : order.title)
-                            .font(.subheadline)
-                            .lineLimit(4)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        Spacer(minLength: 0)
-
-                        VStack(alignment: .trailing, spacing: 4) {
-                            Text(order.statusRaw.isEmpty ? order.status.label : order.statusRaw)
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(statusColor.opacity(0.14))
-                                .foregroundStyle(statusColor)
-                                .clipShape(Capsule())
-                                .fixedSize()
-                            if !order.carrier.isEmpty {
-                                Text(order.carrier)
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+                    Text(order.title.isEmpty ? "（未识别商品名）" : order.title)
+                        .font(.subheadline)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     HStack(spacing: 10) {
                         if !order.orderTime.isEmpty {
@@ -119,51 +99,68 @@ struct OrderRow: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                }
 
-                    HStack(spacing: 8) {
-                        Spacer(minLength: 0)
-                        if !order.pickupCode.isEmpty {
-                            HStack(spacing: 4) {
-                                Image(systemName: "shippingbox.fill")
-                                    .font(.system(size: 9))
-                                Text("取件码 \(order.pickupCode)")
-                                    .font(.caption2.bold())
-                                    .fixedSize()
-                            }
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Color.orange.opacity(0.14), in: Capsule())
-                        }
-                        Spacer(minLength: 0)
+                Spacer(minLength: 0)
+
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(order.statusRaw.isEmpty ? order.status.label : order.statusRaw)
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(statusColor.opacity(0.14))
+                        .foregroundStyle(statusColor)
+                        .clipShape(Capsule())
+                        .fixedSize()
+                    if !order.carrier.isEmpty {
+                        Text(order.carrier)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
                     }
-                    .frame(height: 24)
                 }
             }
+
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                if !order.pickupCode.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "shippingbox.fill")
+                            .font(.system(size: 9))
+                        Text("取件码 \(order.pickupCode)")
+                            .font(.caption2.bold())
+                            .fixedSize()
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.orange.opacity(0.14), in: Capsule())
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(height: 24)
 
             if !order.logistics.isEmpty {
                 Button { onLogisticsTap() } label: {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "truck.box")
-                        .font(.system(size: 13))
-                        .foregroundStyle(statusColor)
-                        .frame(width: 22, height: 18)
-                    Text(order.logistics)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 7)
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "truck.box")
+                            .font(.system(size: 13))
+                            .foregroundStyle(statusColor)
+                            .frame(width: 22, height: 18)
+                        Text(order.logistics)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 7)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
-
         }
         .padding(.vertical, 6)
     }
@@ -182,7 +179,7 @@ struct OrderRow: View {
                 }
             }
         }
-        .frame(width: 84, height: 92)
+        .frame(width: 84, height: 84)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(alignment: .topLeading) {
             Text(order.platform.short)
