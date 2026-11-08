@@ -73,8 +73,8 @@ struct OrderRow: View {
     var onLogisticsTap: () -> Void = {}
 
     private let imageSide: CGFloat = 84
-    private let rowHeight: CGFloat = 104
-    private let titleHeight: CGFloat = 62
+    private let rowHeight: CGFloat = 84
+    private let titleHeight: CGFloat = 42
     private let timeHeight: CGFloat = 18
     private let pillHeight: CGFloat = 24
 
@@ -87,7 +87,7 @@ struct OrderRow: View {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(order.title.isEmpty ? "（未识别商品名）" : order.title)
                             .font(.subheadline)
-                            .lineLimit(3)
+                            .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .frame(height: titleHeight, alignment: .topLeading)
