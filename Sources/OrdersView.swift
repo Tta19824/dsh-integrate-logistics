@@ -68,9 +68,17 @@ struct OrdersView: View {
     }
 }
 
+struct InfoHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct OrderRow: View {
     let order: Order
     var onLogisticsTap: () -> Void = {}
+    @State private var infoHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -122,7 +130,7 @@ struct OrderRow: View {
 
                     if !order.pickupCode.isEmpty {
                         HStack(spacing: 8) {
-                            Spacer(minLength: 8)
+                            Spacer(minLength: 0)
                             HStack(spacing: 4) {
                                 Image(systemName: "shippingbox.fill")
                                     .font(.system(size: 9))
@@ -134,9 +142,18 @@ struct OrderRow: View {
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
                             .background(Color.orange.opacity(0.14), in: Capsule())
+                            Spacer(minLength: 0)
                         }
                     }
                 }
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: InfoHeightKey.self, value: proxy.size.height)
+                    }
+                )
+            }
+            .onPreferenceChange(InfoHeightKey.self) { value in
+                if abs(value - infoHeight) > 0.5 { infoHeight = value }
             }
 
             if !order.logistics.isEmpty {
@@ -180,7 +197,7 @@ struct OrderRow: View {
                 }
             }
         }
-        .frame(width: 68, height: 68)
+        .frame(width: 84, height: max(infoHeight, 84))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(alignment: .topLeading) {
             Text(order.platform.short)

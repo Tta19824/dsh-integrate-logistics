@@ -405,7 +405,7 @@ struct RouteMapView: UIViewRepresentable {
                 ?? TruckPinView(annotation: annotation, reuseIdentifier: id)
             view.annotation = annotation
             view.displayPriority = .required
-            view.apply(text: caption)
+            view.apply(text: (annotation.title ?? nil) ?? caption)
             return view
         }
     }
