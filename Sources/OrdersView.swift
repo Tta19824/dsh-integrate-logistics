@@ -72,56 +72,68 @@ struct OrderRow: View {
     let order: Order
     var onLogisticsTap: () -> Void = {}
 
+    private let imageSide: CGFloat = 84
+    private let rowHeight: CGFloat = 104
+    private let titleHeight: CGFloat = 62
+    private let timeHeight: CGFloat = 18
+    private let pillHeight: CGFloat = 24
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
-                thumbnail
+            ZStack(alignment: .bottom) {
+                HStack(alignment: .top, spacing: 12) {
+                    thumbnail
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(order.title.isEmpty ? "（未识别商品名）" : order.title)
-                        .font(.subheadline)
-                        .lineLimit(4)
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(order.title.isEmpty ? "（未识别商品名）" : order.title)
+                            .font(.subheadline)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(height: titleHeight, alignment: .topLeading)
 
-                    HStack(spacing: 10) {
-                        if !order.orderTime.isEmpty {
-                            HStack(spacing: 4) {
-                                Image(systemName: "clock")
-                                    .font(.system(size: 10))
-                                Text(order.orderTime)
-                                    .font(.caption2)
+                        HStack(spacing: 10) {
+                            if !order.orderTime.isEmpty {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "clock")
+                                        .font(.system(size: 10))
+                                    Text(order.orderTime)
+                                        .font(.caption2)
+                                }
+                                .foregroundStyle(.secondary)
                             }
-                            .foregroundStyle(.secondary)
+                            if !order.amount.isEmpty {
+                                Text("¥\(order.amount)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
                         }
-                        if !order.amount.isEmpty {
-                            Text("¥\(order.amount)")
-                                .font(.caption.monospacedDigit())
+                        .frame(height: timeHeight, alignment: .leading)
+
+                        Spacer(minLength: 0)
+                    }
+                    .frame(height: rowHeight)
+
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(order.statusRaw.isEmpty ? order.status.label : order.statusRaw)
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(statusColor.opacity(0.14))
+                            .foregroundStyle(statusColor)
+                            .clipShape(Capsule())
+                            .fixedSize()
+                        if !order.carrier.isEmpty {
+                            Text(order.carrier)
+                                .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .frame(height: rowHeight, alignment: .center)
                 }
+                .frame(height: rowHeight)
 
-                Spacer(minLength: 0)
-
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(order.statusRaw.isEmpty ? order.status.label : order.statusRaw)
-                        .font(.caption)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(statusColor.opacity(0.14))
-                        .foregroundStyle(statusColor)
-                        .clipShape(Capsule())
-                        .fixedSize()
-                    if !order.carrier.isEmpty {
-                        Text(order.carrier)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            HStack(spacing: 8) {
-                Spacer(minLength: 0)
                 if !order.pickupCode.isEmpty {
                     HStack(spacing: 4) {
                         Image(systemName: "shippingbox.fill")
@@ -134,10 +146,12 @@ struct OrderRow: View {
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.orange.opacity(0.14), in: Capsule())
+                    .frame(height: pillHeight)
+                } else {
+                    Color.clear.frame(height: pillHeight)
                 }
-                Spacer(minLength: 0)
             }
-            .frame(height: 24)
+            .frame(height: rowHeight)
 
             if !order.logistics.isEmpty {
                 Button { onLogisticsTap() } label: {
@@ -179,7 +193,7 @@ struct OrderRow: View {
                 }
             }
         }
-        .frame(width: 84, height: 84)
+        .frame(width: imageSide, height: rowHeight)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(alignment: .topLeading) {
             Text(order.platform.short)
