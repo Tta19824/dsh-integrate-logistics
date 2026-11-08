@@ -120,16 +120,9 @@ struct OrderRow: View {
                         }
                     }
 
-                    HStack(spacing: 8) {
-                        if !order.shopName.isEmpty {
-                            Text(order.shopName)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
-                        Spacer(minLength: 8)
-                        if !order.pickupCode.isEmpty {
+                    if !order.pickupCode.isEmpty {
+                        HStack(spacing: 8) {
+                            Spacer(minLength: 8)
                             HStack(spacing: 4) {
                                 Image(systemName: "shippingbox.fill")
                                     .font(.system(size: 9))
