@@ -147,6 +147,7 @@ struct OrderRow: View {
                     .padding(.vertical, 3)
                     .background(Color.orange.opacity(0.14), in: Capsule())
                     .frame(height: pillHeight)
+                    .offset(y: 2)
                 } else {
                     Color.clear.frame(height: pillHeight)
                 }
