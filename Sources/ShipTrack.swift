@@ -65,31 +65,55 @@ enum ShipTracking {
     }
 
     /// 轨迹里出现的城市/区县名，按出现顺序，用来在地图上顺便把路线画出来。
-    /// 从一条轨迹描述里抽出「阶段 + 预计到达」，给地图气泡用。
-    /// 例如「运输中 预计明天送达 | 中通国际：【盘锦市】快件离开…」→ ("运输中 · 预计明天送达", "盘锦市")
-    static func summary(from desc: String) -> (title: String, subtitle: String, stage: String, eta: String) {
+    /// 从整条轨迹里判断当前阶段，并抽出预计到达时间和当前城市。
+    static func summary(from events: [ShipEvent]) -> (title: String, subtitle: String, stage: String, eta: String) {
         var stage = "运输中"
-        if desc.contains("派件") || desc.contains("派送") { stage = "派件中" }
-        else if desc.contains("已签收") || desc.contains("已送达") || desc.contains("代收") { stage = "已送达" }
-        else if desc.contains("揽收") || desc.contains("已发货") || desc.contains("已收件") { stage = "运输中" }
-
         var eta = ""
-        if let regex = try? NSRegularExpression(pattern: "预计([^，。；、|]{1,8}?)送达"),
-           let match = regex.firstMatch(in: desc, range: NSRange(location: 0, length: (desc as NSString).length)),
-           match.numberOfRanges > 1 {
-            eta = "预计" + (desc as NSString).substring(with: match.range(at: 1)) + "送达"
-        }
-
         var city = ""
-        if let regex = try? NSRegularExpression(pattern: "【([^】]{2,14})】"),
-           let match = regex.firstMatch(in: desc, range: NSRange(location: 0, length: (desc as NSString).length)),
-           match.numberOfRanges > 1 {
-            let raw = (desc as NSString).substring(with: match.range(at: 1))
-            if raw.hasSuffix("市") || raw.hasSuffix("县") || raw.hasSuffix("区") { city = raw }
+
+        for event in events {
+            let text = event.desc
+            if stage != "已送达" {
+                if containsAny(text, ["已签收", "已送达", "代收", "已投递", "已取件", "已放入"]) {
+                    stage = "已送达"
+                } else if stage != "派件中", containsAny(text, ["派件", "派送", "正在投递", "派送中"]) {
+                    stage = "派件中"
+                }
+            }
+            if eta.isEmpty { eta = firstMatch(text, pattern: "预计([^，。；、|]{1,8}?)送达", prefix: "预计", suffix: "送达") }
+            if city.isEmpty { city = firstMatch(text, pattern: "【([^】]{2,14})】", prefix: "", suffix: "", filter: { $0.hasSuffix("市") || $0.hasSuffix("县") || $0.hasSuffix("区") }) }
         }
 
-        let title = eta.isEmpty ? stage : eta
+        let title: String
+        if stage == "已送达" {
+            title = "已送达"
+        } else if eta.isEmpty {
+            title = stage
+        } else {
+            title = eta
+        }
         return (title, city, stage, eta)
+    }
+
+    private static func containsAny(_ text: String, _ words: [String]) -> Bool {
+        for word in words where text.contains(word) { return true }
+        return false
+    }
+
+    private static func firstMatch(
+        _ text: String,
+        pattern: String,
+        prefix: String,
+        suffix: String,
+        filter: ((String) -> Bool)? = nil
+    ) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)),
+              match.numberOfRanges > 1 else { return "" }
+        var value = (text as NSString).substring(with: match.range(at: 1))
+        if let filter, !filter(value) { return "" }
+        value = value.trimmingCharacters(in: .whitespaces)
+        return prefix + value + suffix
     }
 
     /// 从物流 JSON 里找快递单号（运单号）。

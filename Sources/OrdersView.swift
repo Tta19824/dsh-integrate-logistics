@@ -255,7 +255,7 @@ struct LogisticsSheet: View {
     @State private var dragStart: CGFloat?
 
     private var brief: (title: String, subtitle: String, stage: String, eta: String) {
-        ShipTracking.summary(from: events.first?.desc ?? "")
+        ShipTracking.summary(from: events)
     }
 
     var body: some View {
