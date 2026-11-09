@@ -198,15 +198,15 @@ struct OrderRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(alignment: .topLeading) {
             Text(order.platform.short)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.white)
-                .frame(width: 16, height: 16)
-                .background(platformBadgeColor, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .frame(width: 20, height: 20)
+                .background(platformBadgeColor, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .stroke(Color(.systemBackground), lineWidth: 1.5)
                 )
-                .offset(x: -4, y: -4)
+                .offset(x: -5, y: -5)
         }
     }
 
@@ -259,6 +259,11 @@ struct LogisticsSheet: View {
     @State private var message = ""
 
     @State private var mapHeight: CGFloat = 230
+    @State private var traceExpanded = false
+    private var visibleEvents: [ShipEvent] {
+        if traceExpanded || events.count <= 2 { return events }
+        return Array(events.prefix(2))
+    }
     @State private var dragStart: CGFloat?
 
     private var brief: (title: String, subtitle: String, stage: String, eta: String) {
@@ -305,7 +310,7 @@ struct LogisticsSheet: View {
 
                         if !events.isEmpty {
                             VStack(alignment: .leading, spacing: 0) {
-                                ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
+                                ForEach(Array(visibleEvents.enumerated()), id: \.element.id) { index, event in
                                     HStack(alignment: .top, spacing: 10) {
                                         VStack(spacing: 0) {
                                             Circle()
@@ -334,6 +339,23 @@ struct LogisticsSheet: View {
                                         Spacer(minLength: 0)
                                     }
                                 }
+                            }
+
+                            if events.count > 2 {
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.2)) { traceExpanded.toggle() }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(traceExpanded ? "收起" : "展开全部 \(events.count) 条")
+                                            .font(.footnote)
+                                        Image(systemName: traceExpanded ? "chevron.up" : "chevron.down")
+                                            .font(.system(size: 10, weight: .semibold))
+                                    }
+                                    .foregroundStyle(.blue)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                }
+                                .buttonStyle(.plain)
                             }
                             .padding(.horizontal, 16)
                             .padding(.top, 14)
