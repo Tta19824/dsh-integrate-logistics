@@ -20,6 +20,7 @@ struct ContentView: View {
                 .tabItem { Label("平台", systemImage: "person.crop.circle") }
         }
         .environmentObject(app)
+        .task { OrderClient.warmUp() }
         .sheet(item: $app.loginPlatform) { platform in
             LoginSheet(platform: platform)
                 .environmentObject(app)

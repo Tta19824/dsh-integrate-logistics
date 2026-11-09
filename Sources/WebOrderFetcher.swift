@@ -23,6 +23,9 @@ final class WebOrderFetcher: NSObject {
     }
 
     private var webView: WKWebView?
+    /// 预热过的地址与时间：页面已加载好时，刷新可以直接省掉这一次导航
+    private var warmURL: URL?
+    private var warmAt: Date?
     /// 复用同一个 WebView：省掉每次刷新重建 + 重新握手的时间
     private var reusableWebView: WKWebView?
 
@@ -113,6 +116,21 @@ final class WebOrderFetcher: NSObject {
     })()
     """
 
+    /// 启动预热：App 一打开就把订单页加载好，用户点刷新时页面已经是热页。
+    func warmUp(url: URL, cookieHeader: String) async {
+        let wv = reusableWebView ?? makeWebView()
+        webView = wv
+        await prefillCookies(cookieHeader)
+        var request = URLRequest(url: url)
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            forHTTPHeaderField: "User-Agent"
+        )
+        _ = try? await wv.load(request)
+        warmURL = url
+        warmAt = Date()
+    }
+
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
     func capture(urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true) async throws -> Capture {
         let wv = reusableWebView ?? makeWebView()
@@ -128,8 +146,15 @@ final class WebOrderFetcher: NSObject {
                 forHTTPHeaderField: "User-Agent"
             )
 
-            _ = try? await wv.load(request)
-            let loaded = await waitForData(wv: wv, seconds: seconds)
+            var loaded = true
+            if warmURL == url, let at = warmAt, Date().timeIntervalSince(at) < 180 {
+                // 预热页还在：直接进入刷新标签这一步，省掉一次完整导航
+                loaded = true
+            } else {
+                _ = try? await wv.load(request)
+                loaded = await waitForData(wv: wv, seconds: seconds)
+            }
+            warmURL = nil
 
             var title = (try? await wv.evaluateJavaScript("document.title || ''")) as? String ?? ""
             var text = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? ""

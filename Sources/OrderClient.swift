@@ -83,6 +83,16 @@ enum OrderClient {
     }
 
     /// 用真 WebView 打开订单页，让平台自己的 JS 去请求数据，再把渲染结果和接口响应抓回来。
+    /// App 启动时预热拼多多订单页（只对已登录的账号做）
+    static func warmUp() {
+        let cookie = CookieStore.load(for: .pdd) ?? ""
+        guard !cookie.isEmpty else { return }
+        Task {
+            guard let url = URL(string: "https://mobile.pinduoduo.com/order.html") else { return }
+            await WebOrderFetcher.shared.warmUp(url: url, cookieHeader: cookie)
+        }
+    }
+
     private static func fetchPinduoduo(cookie: String) async throws -> FetchOutcome {
         let started = Date()
         let candidates = [
