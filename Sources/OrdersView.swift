@@ -311,51 +311,12 @@ struct LogisticsSheet: View {
                         if !events.isEmpty {
                             VStack(alignment: .leading, spacing: 0) {
                                 ForEach(Array(visibleEvents.enumerated()), id: \.element.id) { index, event in
-                                    HStack(alignment: .top, spacing: 10) {
-                                        VStack(spacing: 0) {
-                                            Circle()
-                                                .fill(index == 0 ? Color.green : Color(.systemGray4))
-                                                .frame(width: 8, height: 8)
-                                                .padding(.top, 6)
-                                            Rectangle()
-                                                .fill(Color(.systemGray5))
-                                                .frame(width: 1)
-                                                .frame(maxHeight: .infinity)
-                                        }
-                                        .frame(width: 8)
-
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(event.desc)
-                                                .font(.footnote)
-                                                .foregroundStyle(index == 0 ? .primary : .secondary)
-                                                .fixedSize(horizontal: false, vertical: true)
-                                            if !event.time.isEmpty {
-                                                Text(event.time)
-                                                    .font(.caption2)
-                                                    .foregroundStyle(.tertiary)
-                                            }
-                                        }
-                                        .padding(.bottom, 16)
-                                        Spacer(minLength: 0)
-                                    }
+                                    self.eventRow(index: index, event: event)
                                 }
-                            }
 
-                            if events.count > 2 {
-                                Button {
-                                    withAnimation(.easeInOut(duration: 0.2)) { traceExpanded.toggle() }
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Text(traceExpanded ? "收起" : "展开全部 \(events.count) 条")
-                                            .font(.footnote)
-                                        Image(systemName: traceExpanded ? "chevron.up" : "chevron.down")
-                                            .font(.system(size: 10, weight: .semibold))
-                                    }
-                                    .foregroundStyle(.blue)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 10)
+                                if events.count > 2 {
+                                    expandButton
                                 }
-                                .buttonStyle(.plain)
                             }
                             .padding(.horizontal, 16)
                             .padding(.top, 14)
@@ -373,6 +334,54 @@ struct LogisticsSheet: View {
             }
             .task { await load() }
         }
+    }
+
+    private func eventRow(index: Int, event: ShipEvent) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(spacing: 0) {
+                Circle()
+                    .fill(index == 0 ? Color.green : Color(.systemGray4))
+                    .frame(width: 8, height: 8)
+                    .padding(.top, 6)
+                Rectangle()
+                    .fill(Color(.systemGray5))
+                    .frame(width: 1)
+                    .frame(maxHeight: .infinity)
+            }
+            .frame(width: 8)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(event.desc)
+                    .font(.footnote)
+                    .foregroundStyle(index == 0 ? Color.primary : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !event.time.isEmpty {
+                    Text(event.time)
+                        .font(.caption2)
+                        .foregroundStyle(Color(.tertiaryLabel))
+                }
+            }
+            .padding(.bottom, 16)
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var expandButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) { traceExpanded.toggle() }
+        } label: {
+            HStack(spacing: 4) {
+                Text(traceExpanded ? "收起" : "展开全部 \(events.count) 条")
+                    .font(.footnote)
+                Image(systemName: traceExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(Color.blue)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+        }
+        .buttonStyle(.plain)
     }
 
     /// 地图下沿的小横条：按住上下拖，调地图高度。
