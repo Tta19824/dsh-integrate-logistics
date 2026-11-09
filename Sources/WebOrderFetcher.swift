@@ -23,6 +23,8 @@ final class WebOrderFetcher: NSObject {
     }
 
     private var webView: WKWebView?
+    /// 复用同一个 WebView：省掉每次刷新重建 + 重新握手的时间
+    private var reusableWebView: WKWebView?
 
     private var hookScript: String {
         """
@@ -64,7 +66,8 @@ final class WebOrderFetcher: NSObject {
     JSON.stringify({
       n: (window.__dshCap || []).length,
       s: (window.__dshCap || []).reduce(function(a, c){ return a + (c.b ? c.b.length : 0); }, 0),
-      t: (document.body ? document.body.innerText.length : 0)
+      t: (document.body ? document.body.innerText.length : 0),
+      o: (window.__dshCap || []).some(function(e){ return String(e.u || '').indexOf('order_list') >= 0; })
     })
     """
 
@@ -112,21 +115,9 @@ final class WebOrderFetcher: NSObject {
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
     func capture(urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true) async throws -> Capture {
-        let cfg = WKWebViewConfiguration()
-        cfg.websiteDataStore = .default()
-        cfg.allowsInlineMediaPlayback = true
-        cfg.userContentController.addUserScript(
-            WKUserScript(source: hookScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        )
-
-        await prefillCookies(cookieHeader)
-
-        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 820), configuration: cfg)
-        wv.alpha = 0.02
-        wv.isUserInteractionEnabled = false
-        attach(wv)
+        let wv = reusableWebView ?? makeWebView()
         webView = wv
-        defer { detach() }
+        await prefillCookies(cookieHeader)
 
         var tried: [String] = []
 
@@ -158,12 +149,14 @@ final class WebOrderFetcher: NSObject {
             }
 
             if clickTabs {
-                // 只关心「待发货 / 待收货」两个标签：点一下让页面去请求对应列表，
-                // 抓到的多个 order_list_v4 响应会在解析时合并。
+                // 只关心「待发货 / 待收货」两个标签：点一下让页面去请求对应列表。
+                // 不再死等固定秒数，盯住新到的 order_list 响应，来了立刻走。
+                var baseline = await self.entryCount(wv)
                 _ = try? await wv.evaluateJavaScript(self.clickTabJS(["待发货", "打包中"]))
-                await self.sleep(2.2)
+                _ = await self.waitForNewOrderList(wv: wv, from: baseline, seconds: 2.6)
+                baseline = await self.entryCount(wv)
                 _ = try? await wv.evaluateJavaScript(self.clickTabJS(["待收货"]))
-                await self.sleep(2.8)
+                _ = await self.waitForNewOrderList(wv: wv, from: baseline, seconds: 3.0)
             }
 
             let cards = (try? await wv.evaluateJavaScript(Self.cardsJS)) as? String ?? "[]"
@@ -276,17 +269,52 @@ final class WebOrderFetcher: NSObject {
 
     private func waitForData(wv: WKWebView, seconds: Double) async -> Bool {
         let deadline = Date().addingTimeInterval(seconds)
+        var first = true
         while Date() < deadline {
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            try? await Task.sleep(nanoseconds: first ? 500_000_000 : 500_000_000)
+            first = false
             guard let raw = (try? await wv.evaluateJavaScript(statsJS)) as? String,
                   let data = raw.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else { continue }
             let bytes = (obj["s"] as? Int) ?? 0
             let chars = (obj["t"] as? Int) ?? 0
-            if bytes > 30_000 || chars > 600 { return true }
+            let hasList = (obj["o"] as? Bool) ?? false
+            if hasList && bytes > 5_000 { return true }
+            if bytes > 20_000 || chars > 400 { return true }
         }
         return false
+    }
+
+    private func entryCount(_ wv: WKWebView) async -> Int {
+        guard let raw = (try? await wv.evaluateJavaScript("String((window.__dshCap || []).length)")) as? String else { return 0 }
+        return Int(raw) ?? 0
+    }
+
+    /// 等新到的 order_list 响应；来了立刻返回，省掉原来的固定等待。
+    private func waitForNewOrderList(wv: WKWebView, from: Int, seconds: Double) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        let js = "(function(s){var a=window.__dshCap||[];for(var i=(s||0);i<a.length;i++){if(String(a[i].u||'').indexOf('order_list')>=0)return '1';}return '0';})"
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            if let v = (try? await wv.evaluateJavaScript(js + "(\\(from))")) as? String, v == "1" { return true }
+        }
+        return false
+    }
+
+    private func makeWebView() -> WKWebView {
+        let cfg = WKWebViewConfiguration()
+        cfg.websiteDataStore = .default()
+        cfg.allowsInlineMediaPlayback = true
+        cfg.userContentController.addUserScript(
+            WKUserScript(source: hookScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        )
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 820), configuration: cfg)
+        wv.alpha = 0.02
+        wv.isUserInteractionEnabled = false
+        attach(wv)
+        reusableWebView = wv
+        return wv
     }
 
     private func shortURL(_ url: URL) -> String {

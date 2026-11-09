@@ -84,6 +84,7 @@ enum OrderClient {
 
     /// 用真 WebView 打开订单页，让平台自己的 JS 去请求数据，再把渲染结果和接口响应抓回来。
     private static func fetchPinduoduo(cookie: String) async throws -> FetchOutcome {
+        let started = Date()
         let candidates = [
             "https://mobile.pinduoduo.com/order.html",
             "https://mobile.yangkeduo.com/orders.html"
@@ -152,6 +153,7 @@ enum OrderClient {
             : "没抓到接口响应，页面文本 \(info.textChars) 字"
         if orders.isEmpty, !info.snippet.isEmpty { note += "；页面开头：\(info.snippet.prefix(60))" }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
+        note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
 
         return FetchOutcome(
             orders: orders,
@@ -227,17 +229,24 @@ enum OrderClient {
     /// 对还在运输中的订单补物流信息（快递公司、最新轨迹、取件码）。
     private static func enrichShipping(_ orders: [Order], cookie: String) async -> [Order] {
         guard !cookie.isEmpty else { return orders }
+        let targets = Array(orders.indices.filter { orders[$0].status == .shipped && orders[$0].pickupCode.isEmpty }.prefix(3))
+        guard !targets.isEmpty else { return orders }
+
         var result = orders
-        var budget = 3
-        for index in result.indices {
-            guard budget > 0 else { break }
-            let order = result[index]
-            guard order.status == .shipped, order.pickupCode.isEmpty else { continue }
-            budget -= 1
-            guard let ship = await ShippingClient.fetch(orderNo: order.orderNo, cookieHeader: cookie) else { continue }
-            if !ship.carrier.isEmpty { result[index].carrier = ship.carrier }
-            if !ship.pickup.isEmpty { result[index].pickupCode = ship.pickup }
-            if !ship.logistics.isEmpty { result[index].logistics = ship.logistics }
+        // 三单并发问物流接口，不再一单一单排队
+        await withTaskGroup(of: (Int, ShippingClient.Info?).self) { group in
+            for index in targets {
+                let sn = orders[index].orderNo
+                group.addTask {
+                    (index, await ShippingClient.fetch(orderNo: sn, cookieHeader: cookie))
+                }
+            }
+            for await (index, info) in group {
+                guard let info else { continue }
+                if !info.carrier.isEmpty { result[index].carrier = info.carrier }
+                if !info.pickup.isEmpty { result[index].pickupCode = info.pickup }
+                if !info.logistics.isEmpty { result[index].logistics = info.logistics }
+            }
         }
         return result
     }
