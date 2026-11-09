@@ -374,8 +374,9 @@ struct LogisticsSheet: View {
             HStack(spacing: 4) {
                 Text(traceExpanded ? "收起" : "展开全部 \(events.count) 条")
                     .font(.footnote)
-                Image(systemName: traceExpanded ? "chevron.up" : "chevron.down")
+                Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
+                    .rotationEffect(.degrees(traceExpanded ? 180 : 0))
             }
             .foregroundStyle(Color.blue)
             .frame(maxWidth: .infinity)
