@@ -115,7 +115,7 @@ struct OrderRow: View {
                     }
                     .frame(height: rowHeight)
 
-                    VStack(alignment: .trailing, spacing: 4) {
+                    VStack(alignment: .center, spacing: 3) {
                         Text(order.statusRaw.isEmpty ? order.status.label : order.statusRaw)
                             .font(.caption)
                             .padding(.horizontal, 8)
@@ -131,6 +131,7 @@ struct OrderRow: View {
                         }
                     }
                     .frame(height: rowHeight, alignment: .center)
+                    .offset(y: -3)
                 }
                 .frame(height: rowHeight)
 
