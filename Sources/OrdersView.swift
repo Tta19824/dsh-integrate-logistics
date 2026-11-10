@@ -116,7 +116,7 @@ struct OrderRow: View {
                     .frame(height: rowHeight)
 
                     Button {
-                        PddLink.openOrderDetail(orderNo: order.orderNo)
+                        PddLink.openDefault(orderNo: order.orderNo)
                     } label: {
                         VStack(alignment: .center, spacing: 3) {
                             Text(order.shortStatusText)
@@ -508,24 +508,3 @@ extension Order {
     }
 }
 
-enum PddLink {
-    /// 跳到拼多多 App 里的订单详情；内部路由不确定，逐个试，能打开哪个算哪个。
-    static func openOrderDetail(orderNo: String) {
-        let sn = orderNo.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? orderNo
-        var urls: [URL] = []
-        for raw in ["pinduoduo://com.xunmeng.pinduoduo/order_detail?order_sn=\(sn)",
-                    "pinduoduo://com.xunmeng.pinduoduo/orders?order_sn=\(sn)",
-                    "pinduoduo://com.xunmeng.pinduoduo"] {
-            if let url = URL(string: raw) { urls.append(url) }
-        }
-        openFirst(urls)
-    }
-
-    private static func openFirst(_ urls: [URL]) {
-        guard let url = urls.first else { return }
-        let rest = Array(urls.dropFirst())
-        UIApplication.shared.open(url, options: [:]) { ok in
-            if !ok { openFirst(rest) }
-        }
-    }
-}

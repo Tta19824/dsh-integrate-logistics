@@ -56,6 +56,29 @@ struct PlatformsView: View {
                 }
 
                 Section {
+                    Button("用第一单试跳转（会打开拼多多）") {
+                        if let sn = app.orders.first(where: { $0.platform == .pdd })?.orderNo {
+                            PddLink.open(PddLink.routes[0], orderNo: sn)
+                        } else {
+                            app.show("本地还没有拼多多订单，先刷新一次")
+                        }
+                    }
+                    ForEach(Array(PddLink.routes.enumerated()), id: \.offset) { index, route in
+                        Button(route.name) {
+                            if let sn = app.orders.first(where: { $0.platform == .pdd })?.orderNo {
+                                PddLink.open(route, orderNo: sn)
+                            } else {
+                                app.show("本地还没有拼多多订单，先刷新一次")
+                            }
+                        }
+                    }
+                } header: {
+                    Text("调试 · 订单页跳转")
+                } footer: {
+                    Text("从上到下逐个点，记下哪一条能准确进到该订单的详情页，告诉我就固定用它。")
+                }
+
+                Section {
                     if !capture.pageTitle.isEmpty {
                         HStack {
                             Text("页面标题")
