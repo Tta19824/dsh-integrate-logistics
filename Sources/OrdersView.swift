@@ -115,22 +115,29 @@ struct OrderRow: View {
                     }
                     .frame(height: rowHeight)
 
-                    VStack(alignment: .center, spacing: 3) {
-                        Text(order.statusRaw.isEmpty ? order.status.label : order.statusRaw)
-                            .font(.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(statusColor.opacity(0.14))
-                            .foregroundStyle(statusColor)
-                            .clipShape(Capsule())
-                            .fixedSize()
-                        if !order.carrier.isEmpty {
-                            Text(order.carrier)
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
+                    Button {
+                        PddLink.openOrderDetail(orderNo: order.orderNo)
+                    } label: {
+                        VStack(alignment: .center, spacing: 3) {
+                            Text(order.shortStatusText)
+                                .font(.caption)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(statusColor.opacity(0.14))
+                                .foregroundStyle(statusColor)
+                                .clipShape(Capsule())
+                                .fixedSize()
+                            if !order.carrier.isEmpty {
+                                Text(order.carrier)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                        .frame(height: rowHeight, alignment: .center)
+                        .frame(minWidth: 56)
+                        .contentShape(Rectangle())
                     }
-                    .frame(height: rowHeight, alignment: .center)
+                    .buttonStyle(.plain)
                     .offset(y: -3)
                 }
                 .frame(height: rowHeight)
@@ -483,5 +490,42 @@ struct LogisticsSheet: View {
             }
         }
         loading = false
+    }
+}
+
+extension Order {
+    /// 接口给的 order_status_prompt 可能是「免拼成功，待发货」这种长句，胶囊里只留关键词。
+    var shortStatusText: String {
+        let raw = statusRaw
+        if raw.isEmpty { return status.label }
+        if raw.contains("待发货") || raw.contains("打包") || raw.contains("待出库") { return "待发货" }
+        if raw.contains("待收货") || raw.contains("运输中") || raw.contains("派送") || raw.contains("派件") { return "待收货" }
+        if raw.contains("待付款") { return "待付款" }
+        if raw.contains("退款") || raw.contains("售后") { return "退款中" }
+        if raw.contains("取消") || raw.contains("关闭") { return "已取消" }
+        if raw.contains("成功") || raw.contains("完成") || raw.contains("已签收") { return "已完成" }
+        return raw.count <= 6 ? raw : status.label
+    }
+}
+
+enum PddLink {
+    /// 跳到拼多多 App 里的订单详情；内部路由不确定，逐个试，能打开哪个算哪个。
+    static func openOrderDetail(orderNo: String) {
+        let sn = orderNo.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? orderNo
+        var urls: [URL] = []
+        for raw in ["pinduoduo://com.xunmeng.pinduoduo/order_detail?order_sn=\(sn)",
+                    "pinduoduo://com.xunmeng.pinduoduo/orders?order_sn=\(sn)",
+                    "pinduoduo://com.xunmeng.pinduoduo"] {
+            if let url = URL(string: raw) { urls.append(url) }
+        }
+        openFirst(urls)
+    }
+
+    private static func openFirst(_ urls: [URL]) {
+        guard let url = urls.first else { return }
+        let rest = Array(urls.dropFirst())
+        UIApplication.shared.open(url, options: [:]) { ok in
+            if !ok { openFirst(rest) }
+        }
     }
 }
