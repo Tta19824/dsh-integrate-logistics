@@ -122,19 +122,37 @@ enum OrderClient {
     /// 淘宝 / 京东：都是前端渲染，用同一个 WebView 抓包路线，只是地址和解析器不同。
     private static func fetchWebOrders(platform: Platform, cookie: String, urls: [String], seconds: Double) async throws -> FetchOutcome {
         let started = Date()
-        let candidates = urls.compactMap { URL(string: $0) }
-        guard !candidates.isEmpty else { throw FetchError.badURL }
+        let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
-        let capture = try await WebOrderFetcher.shared.capture(
-            platform: platform,
-            urls: candidates,
-            cookieHeader: cookie,
-            seconds: seconds,
-            clickTabs: false,
-            minWait: 12,
-            strict: true,
-            scroll: true
-        )
+        // 每个地址先用手机 UA 试；PC 版地址再补一次桌面 UA
+        var plan: [(String, String)] = urls.map { ($0, mobileUA) }
+        for url in urls where url.contains("buyertrade") || url.contains("trade/itemlist") {
+            plan.append((url, desktopUA))
+        }
+
+        var capture: Capture?
+        var tried: [String] = []
+
+        for (raw, ua) in plan {
+            guard let url = URL(string: raw) else { continue }
+            let one = try await WebOrderFetcher.shared.capture(
+                platform: platform,
+                urls: [url],
+                cookieHeader: cookie,
+                seconds: seconds,
+                clickTabs: false,
+                minWait: 10,
+                strict: true,
+                scroll: true,
+                userAgent: ua
+            )
+            tried.append(contentsOf: one.tried)
+            if capture == nil { capture = one }
+            if one.payloadJSON.count > 4 { capture = one; break }
+        }
+
+        guard let capture else { throw FetchError.badURL }
 
         if !capture.cookieHeader.isEmpty, capture.cookieHeader != cookie,
            CookieStore.hasLogin(capture.cookieHeader, platform: platform) {
@@ -145,7 +163,7 @@ enum OrderClient {
         info.textChars = capture.text.count
         info.payloadChars = capture.payloadJSON.count
         info.pageTitle = capture.title
-        info.attempts = capture.tried
+        info.attempts = tried
         info.snippet = String(capture.text.prefix(160))
             .replacingOccurrences(of: "\n", with: " ⏎ ")
             .trimmingCharacters(in: .whitespacesAndNewlines)

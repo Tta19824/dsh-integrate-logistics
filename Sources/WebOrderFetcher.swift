@@ -132,18 +132,19 @@ final class WebOrderFetcher: NSObject {
     }
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
-    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true, minWait: Double = 0, strict: Bool = false, scroll: Bool = false) async throws -> Capture {
+    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true, minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil) async throws -> Capture {
         let wv = reusableWebView ?? makeWebView()
         webView = wv
         await prefillCookies(cookieHeader)
 
         var tried: [String] = []
+        var best: Capture?
         let startedAt = Date()
 
         for url in urls {
             var request = URLRequest(url: url)
             request.setValue(
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                userAgent ?? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
                 forHTTPHeaderField: "User-Agent"
             )
 
@@ -199,7 +200,7 @@ final class WebOrderFetcher: NSObject {
             let cards = (try? await wv.evaluateJavaScript(Self.cardsJS)) as? String ?? "[]"
             let payload = (try? await wv.evaluateJavaScript("JSON.stringify(window.__dshCap || [])")) as? String ?? "[]"
             let freshCookie = await CookieStore.currentHeader(for: platform) ?? ""
-            return Capture(
+            let made = Capture(
                 finalURL: wv.url?.absoluteString ?? url.absoluteString,
                 title: title,
                 text: text,
@@ -209,7 +210,15 @@ final class WebOrderFetcher: NSObject {
                 cookieHeader: freshCookie,
                 cardsJSON: cards
             )
+            if stopOnEntries && Self.payloadEntryCount(payload) == 0 {
+                // 这个地址没抓到接口响应，继续试下一个地址
+                if best == nil { best = made }
+                continue
+            }
+            return made
         }
+
+        if let best { return best }
 
         // 全都落到登录页
         let title = (try? await wv.evaluateJavaScript("document.title || ''")) as? String ?? ""
@@ -326,6 +335,12 @@ final class WebOrderFetcher: NSObject {
             }
         }
         return false
+    }
+
+    private static func payloadEntryCount(_ payloadJSON: String) -> Int {
+        guard let data = payloadJSON.data(using: .utf8),
+              let list = try? JSONSerialization.jsonObject(with: data) as? [Any] else { return 0 }
+        return list.count
     }
 
     private func entryCount(_ wv: WKWebView) async -> Int {
