@@ -77,8 +77,10 @@ enum OrderClient {
         switch platform {
         case .pdd:
             return try await fetchPinduoduo(cookie: cookie)
-        case .tb, .jd:
-            throw FetchError.note("\(platform.name) 的抓取还在开发中，下个版本加")
+        case .tb:
+            return try await fetchTaobao(cookie: cookie)
+        case .jd:
+            return try await fetchJd(cookie: cookie)
         }
     }
 
@@ -91,6 +93,104 @@ enum OrderClient {
             guard let url = URL(string: "https://mobile.pinduoduo.com/order.html") else { return }
             await WebOrderFetcher.shared.warmUp(url: url, cookieHeader: cookie)
         }
+    }
+
+    private static func fetchTaobao(cookie: String) async throws -> FetchOutcome {
+        try await fetchWebOrders(
+            platform: .tb,
+            cookie: cookie,
+            urls: [
+                "https://h5.m.taobao.com/mlapp/olist.html",
+                "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm"
+            ],
+            seconds: 22
+        )
+    }
+
+    private static func fetchJd(cookie: String) async throws -> FetchOutcome {
+        try await fetchWebOrders(
+            platform: .jd,
+            cookie: cookie,
+            urls: [
+                "https://home.m.jd.com/myOrders/myOrders.action",
+                "https://m.jd.com/order/orderList.action"
+            ],
+            seconds: 22
+        )
+    }
+
+    /// 淘宝 / 京东：都是前端渲染，用同一个 WebView 抓包路线，只是地址和解析器不同。
+    private static func fetchWebOrders(platform: Platform, cookie: String, urls: [String], seconds: Double) async throws -> FetchOutcome {
+        let started = Date()
+        let candidates = urls.compactMap { URL(string: $0) }
+        guard !candidates.isEmpty else { throw FetchError.badURL }
+
+        let capture = try await WebOrderFetcher.shared.capture(
+            urls: candidates,
+            cookieHeader: cookie,
+            seconds: seconds,
+            clickTabs: false
+        )
+
+        if !capture.cookieHeader.isEmpty, capture.cookieHeader != cookie,
+           CookieStore.hasLogin(capture.cookieHeader, platform: platform) {
+            CookieStore.save(capture.cookieHeader, for: platform)
+        }
+
+        var info = CaptureInfo()
+        info.textChars = capture.text.count
+        info.payloadChars = capture.payloadJSON.count
+        info.pageTitle = capture.title
+        info.attempts = capture.tried
+        info.snippet = String(capture.text.prefix(160))
+            .replacingOccurrences(of: "\n", with: " ⏎ ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let pageErr = write(capture.text, to: pageFile(for: platform))
+        let payloadErr = write(capture.payloadJSON, to: payloadFile(for: platform))
+        info.writeError = [pageErr, payloadErr].compactMap { $0 }.joined(separator: " / ")
+
+        if let data = capture.payloadJSON.data(using: .utf8),
+           let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            info.entryCount = entries.count
+            var largest = ""
+            for entry in entries {
+                let path = urlPath(entry["u"] as? String ?? "")
+                let body = entry["b"] as? String ?? ""
+                if !path.isEmpty, !info.urls.contains(path) { info.urls.append(path) }
+                if !path.isEmpty, info.entrySizes.count < 8 {
+                    info.entrySizes.append("\(shortPath(path)) · \(body.count / 1024) KB")
+                }
+                if body.count > largest.count { largest = body }
+            }
+            info.urls = Array(info.urls.prefix(8))
+            info.largestBody = largest
+        }
+
+        lastCapture = info
+
+        let orders = TaobaoJdParser.parse(platform: platform, text: capture.text, payloadJSON: capture.payloadJSON)
+
+        if capture.landedOnLogin {
+            throw FetchError.note("\(platform.name) 的登录态失效了，点「重新登录」，登录完再刷新订单。")
+        }
+
+        var note = info.entryCount > 0
+            ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单"
+            : "没抓到接口响应，页面文本 \(info.textChars) 字"
+        if orders.isEmpty, !info.snippet.isEmpty {
+            note += "；页面开头：\(info.snippet.prefix(50))"
+        }
+        if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
+        note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
+
+        return FetchOutcome(
+            orders: orders,
+            httpStatus: 200,
+            byteCount: info.textChars + info.payloadChars,
+            rawFileURL: payloadFile(for: platform),
+            note: note
+        )
     }
 
     private static func fetchPinduoduo(cookie: String) async throws -> FetchOutcome {
