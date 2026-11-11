@@ -192,8 +192,6 @@ enum TaobaoJdParser {
         }
         return trimmed
     }
-}
-
 
     // MARK: - PC 订单页 HTML
 
@@ -391,3 +389,4 @@ enum TaobaoJdParser {
         }
         return hash
     }
+}
