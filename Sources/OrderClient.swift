@@ -131,7 +131,7 @@ enum OrderClient {
             plan.append((url, desktopUA))
         }
 
-        var capture: Capture?
+        var capture: WebOrderFetcher.Capture?
         var tried: [String] = []
 
         for (raw, ua) in plan {
