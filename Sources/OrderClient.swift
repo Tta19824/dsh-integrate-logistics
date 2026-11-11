@@ -65,6 +65,10 @@ enum OrderClient {
         rawDirectory().appendingPathComponent("cards_\(platform.rawValue).json")
     }
 
+    static func htmlFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("page_\(platform.rawValue).html")
+    }
+
     /// 订单详情页抓到的接口数据（排查店铺名用）
     static func detailPayloadFile(for platform: Platform) -> URL {
         rawDirectory().appendingPathComponent("payload_detail_\(platform.rawValue).json")
@@ -132,6 +136,7 @@ enum OrderClient {
         }
 
         var capture: WebOrderFetcher.Capture?
+        var orders: [Order] = []
         var tried: [String] = []
 
         for (raw, ua) in plan {
@@ -148,8 +153,12 @@ enum OrderClient {
                 userAgent: ua
             )
             tried.append(contentsOf: one.tried)
-            if capture == nil { capture = one }
-            if one.payloadJSON.count > 4 { capture = one; break }
+            let parsed = TaobaoJdParser.parse(platform: platform, text: one.text, payloadJSON: one.payloadJSON, html: one.html)
+            if parsed.count > orders.count || capture == nil {
+                capture = one
+                orders = parsed
+            }
+            if !orders.isEmpty { break }
         }
 
         guard let capture else { throw FetchError.badURL }
@@ -170,7 +179,8 @@ enum OrderClient {
 
         let pageErr = write(capture.text, to: pageFile(for: platform))
         let payloadErr = write(capture.payloadJSON, to: payloadFile(for: platform))
-        info.writeError = [pageErr, payloadErr].compactMap { $0 }.joined(separator: " / ")
+        let htmlErr = write(capture.html, to: htmlFile(for: platform))
+        info.writeError = [pageErr, payloadErr, htmlErr].compactMap { $0 }.joined(separator: " / ")
 
         if let data = capture.payloadJSON.data(using: .utf8),
            let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
@@ -190,8 +200,6 @@ enum OrderClient {
         }
 
         lastCapture = info
-
-        let orders = TaobaoJdParser.parse(platform: platform, text: capture.text, payloadJSON: capture.payloadJSON)
 
         if capture.landedOnLogin {
             throw FetchError.note("\(platform.name) 的登录态失效了，点「重新登录」，登录完再刷新订单。")

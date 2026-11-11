@@ -20,6 +20,8 @@ final class WebOrderFetcher: NSObject {
         var cookieHeader: String = ""
         /// 订单列表卡片上的文字（含取件码、最新物流），JSON 数组 [{sn,text}]
         var cardsJSON: String = "[]"
+        /// 渲染后的完整 HTML（PC 订单页是服务端渲染的，订单号只在这里）
+        var html: String = ""
     }
 
     private var webView: WKWebView?
@@ -200,6 +202,8 @@ final class WebOrderFetcher: NSObject {
             let cards = (try? await wv.evaluateJavaScript(Self.cardsJS)) as? String ?? "[]"
             let payload = (try? await wv.evaluateJavaScript("JSON.stringify(window.__dshCap || [])")) as? String ?? "[]"
             let freshCookie = await CookieStore.currentHeader(for: platform) ?? ""
+            var html = (try? await wv.evaluateJavaScript("document.documentElement ? document.documentElement.outerHTML : ''")) as? String ?? ""
+            if html.count > 1_500_000 { html = String(html.prefix(1_500_000)) }
             let made = Capture(
                 finalURL: wv.url?.absoluteString ?? url.absoluteString,
                 title: title,
@@ -208,7 +212,8 @@ final class WebOrderFetcher: NSObject {
                 landedOnLogin: false,
                 tried: tried,
                 cookieHeader: freshCookie,
-                cardsJSON: cards
+                cardsJSON: cards,
+                html: html
             )
             if stopOnEntries && Self.payloadEntryCount(payload) == 0 {
                 // 这个地址没抓到接口响应，继续试下一个地址
