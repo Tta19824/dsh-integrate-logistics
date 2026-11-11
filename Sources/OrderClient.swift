@@ -72,7 +72,7 @@ enum OrderClient {
     /// 订单详情页抓到的接口数据（排查店铺名用）
     /// 淘宝 / 京东订单页上的图片与时间摘要
     static func digestFile(for platform: Platform) -> URL {
-        rawDirectory.appendingPathComponent("digest_\(platform.rawValue).json")
+        rawDirectory().appendingPathComponent("digest_\(platform.rawValue).json")
     }
 
     static func detailPayloadFile(for platform: Platform) -> URL {
