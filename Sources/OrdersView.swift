@@ -496,6 +496,15 @@ struct LogisticsSheet: View {
 extension Order {
     /// 接口给的 order_status_prompt 可能是「免拼成功，待发货」这种长句，胶囊里只留关键词。
     var shortStatusText: String {
+        switch status {
+        case .unpaid: return "待付款"
+        case .paid: return "待发货"
+        case .shipped: return "待收货"
+        case .completed: return "已完成"
+        case .cancelled: return "已取消"
+        case .refunding: return "退款中"
+        case .unknown: break
+        }
         let raw = statusRaw
         if raw.isEmpty { return status.label }
         if raw.contains("待发货") || raw.contains("打包") || raw.contains("待出库") { return "待发货" }

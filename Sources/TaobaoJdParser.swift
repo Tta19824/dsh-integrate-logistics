@@ -269,101 +269,126 @@ enum TaobaoJdParser {
 
     // MARK: - 页面文本兜底
 
-    /// 淘宝电脑版订单页的 innerText 是「店铺 / 状态 / 标题 / ￥ / 价格 / ×1 / 实付款 / ￥ / 金额」这样的块。
-    /// 订单号在文字里看不到，所以用「店铺+标题+价格」算一个稳定 id。
+    private static let tbTags: Set<String> = [
+        "退货宝", "极速退款", "7天无理由退货", "7天无理由退换", "大促价保", "7天价保", "15天价保",
+        "假一赔四", "假一赔十", "破损包退", "食品安全理赔", "慢必赔", "过敏包退", "赠品",
+        "含包装/配送费", "不支持7天无理由", "公益宝贝", "运费险", "官方立减", "政府补贴"
+    ]
+
+    private static let tbStatuses: [String: OrderStatus] = [
+        "待付款": .unpaid, "等待买家付款": .unpaid, "买家已付款": .paid, "待发货": .paid,
+        "卖家已发货": .shipped, "待收货": .shipped, "已签收": .shipped, "运输中": .shipped,
+        "交易成功": .completed, "已完成": .completed, "待评价": .completed,
+        "交易关闭": .cancelled, "已取消": .cancelled,
+        "退款成功": .refunding, "退款中": .refunding
+    ]
+
+    /// 淘宝电脑版订单页的 innerText 是「店铺 / 状态 / 标题 / 标签… / ￥ / 单价 / ×1 / 实付款 / ￥ / 金额 / 按钮」这样的块。
+    /// 用「实付款 / 应付款 / 合计」做锚点向前回溯找标题、状态、店铺，比顺着状态往下猜可靠。
     static func parseText(platform: Platform, text: String) -> [Order] {
-        let rawLines = text.components(separatedBy: "\n")
-        let lines = rawLines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        let statusWords = ["等待买家付款", "买家已付款", "卖家已发货", "交易成功", "交易关闭", "已签收", "退款成功", "退款中", "待发货", "待收货", "待付款"]
+        let lines = text.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
 
         var out: [Order] = []
         var seen = Set<String>()
-        var i = 0
 
-        func nextNonEmpty(from index: Int) -> (Int, String)? {
-            var j = index
-            while j < lines.count {
-                if !lines[j].isEmpty { return (j, lines[j]) }
-                j += 1
-            }
-            return nil
+        func isMoney(_ s: String) -> Bool {
+            s.range(of: #"^[0-9]+(\.[0-9]{1,2})?$"#, options: .regularExpression) != nil
         }
 
-        while i < lines.count {
-            let line = lines[i]
-            let statusRaw = statusWords.first(where: { line == $0 || (line.hasPrefix($0) && line.count <= $0.count + 6) })
-            guard let statusRaw else { i += 1; continue }
-
-            // 店铺：上一行非空
-            var shop = ""
-            var j = i - 1
-            while j >= 0 {
-                if !lines[j].isEmpty { shop = lines[j]; break }
-                j -= 1
+        func amountAfter(_ index: Int) -> String {
+            var j = index + 1
+            var guardCount = 0
+            while j < lines.count && guardCount < 4 {
+                let v = lines[j]
+                if v == "￥" || v == "¥" { j += 1; guardCount += 1; continue }
+                if isMoney(v) { return v }
+                return ""
             }
+            return ""
+        }
 
-            // 标题：下一行非空
-            var title = ""
-            var k = i + 1
-            if let (_, value) = nextNonEmpty(from: k) { title = value; k += 1 }
-            guard title.count >= 4 else { i += 1; continue }
+        let anchors = lines.indices.filter { lines[$0] == "实付款" || lines[$0] == "应付款" || lines[$0] == "合计" }
 
-            // 价格：先找「实付款」后面的数，没有就取第一个 ￥ 后面的数
-            var amount = ""
-            var paid = ""
-            var scan = k
+        for anchor in anchors {
+            let paid = amountAfter(anchor)
+            guard !paid.isEmpty else { continue }
+
+            // 价格区：向前最近的 ×N，再取其前面的金额
+            var priceIndex = -1
+            var k = anchor - 1
             var steps = 0
-            while scan < lines.count && steps < 40 {
-                let value = lines[scan]
-                if value == "实付款" {
-                    if let (_, number) = nextNonEmpty(from: scan + 1) {
-                        if number == "￥" {
-                            if let (_, real) = nextNonEmpty(from: scan + 2) { paid = real }
-                        } else {
-                            paid = number.replacingOccurrences(of: "￥", with: "")
-                        }
-                    }
-                    break
-                }
-                if amount.isEmpty, value == "￥", let (_, number) = nextNonEmpty(from: scan + 1), number.rangeOfCharacter(from: CharacterSet.decimalDigits) != nil {
-                    amount = number
-                } else if amount.isEmpty, value.hasPrefix("￥"), value.count > 1 {
-                    amount = String(value.dropFirst())
-                }
-                if statusWords.contains(value) && value != statusRaw { break }
-                scan += 1
+            while k >= 0 && steps < 14 {
+                if lines[k].hasPrefix("×") || lines[k].hasPrefix("x") { priceIndex = k; break }
+                k -= 1
                 steps += 1
             }
-            let finalAmount = paid.isEmpty ? amount : paid
-            let cleanAmount = finalAmount.replacingOccurrences(of: "￥", with: "").trimmingCharacters(in: .whitespaces)
 
-            let seed = "\(shop)|\(title)|\(cleanAmount)|\(out.count)"
-            let orderNo = "TB" + String(abs(stableHash(seed)) % 1_000_000_000_000)
-            let id = Order.makeID(platform: platform, orderNo: orderNo)
-            if !seen.contains(id) {
-                seen.insert(id)
-                out.append(
-                    Order(
-                        id: id,
-                        platform: platform,
-                        orderNo: orderNo,
-                        title: title,
-                        shopName: shop,
-                        amount: cleanAmount,
-                        status: OrderStatus.parse(statusRaw),
-                        statusRaw: statusRaw,
-                        orderTime: "",
-                        logistics: "",
-                        pickupCode: "",
-                        updatedAt: Date()
-                    )
-                )
+            var titleIndex = -1
+            var scan = (priceIndex > 0 ? priceIndex : anchor) - 1
+            steps = 0
+            while scan >= 0 && steps < 24 {
+                let v = lines[scan]
+                let skip = v == "￥" || v == "¥" || isMoney(v) || tbTags.contains(v)
+                    || v.hasPrefix("共") || v.contains("件") || v.contains("包邮")
+                    || v.hasPrefix("承诺") || v.hasPrefix("预计")
+                if !skip && v.count >= 4 { titleIndex = scan; break }
+                scan -= 1
+                steps += 1
+            }
+            guard titleIndex >= 0 else { continue }
+
+            let title = lines[titleIndex]
+
+            // 状态：标题往上找
+            var statusRaw = ""
+            var statusIndex = -1
+            var s = titleIndex - 1
+            steps = 0
+            while s >= 0 && steps < 8 {
+                if tbStatuses[lines[s]] != nil { statusRaw = lines[s]; statusIndex = s; break }
+                s -= 1
+                steps += 1
             }
 
-            i = max(i + 1, k)
-            if out.count >= 40 { break }
+            // 店铺：状态往上 1~2 行（连锁店会多一行分店名）
+            var shop = ""
+            if statusIndex > 0 {
+                let up1 = lines[statusIndex - 1]
+                let up2 = statusIndex >= 2 ? lines[statusIndex - 2] : ""
+                if !up2.isEmpty && !isMoney(up2) && up2 != "￥" && (up1.hasSuffix("店") || up1.contains("旗舰") || up1.contains("专营")) && up1.count <= 22 && up2.count <= 26 {
+                    shop = up2
+                } else {
+                    shop = up1
+                }
+                if shop == "￥" || isMoney(shop) { shop = "" }
+            }
+
+            let orderNo = "TB\(Self.stableHash(title + "|" + paid + "|" + shop))"
+            guard !seen.contains(orderNo) else { continue }
+            seen.insert(orderNo)
+
+            out.append(Order(
+                id: Order.makeID(platform: platform, orderNo: orderNo),
+                platform: platform,
+                orderNo: orderNo,
+                title: title,
+                shopName: shop,
+                amount: paid,
+                status: tbStatuses[statusRaw] ?? .unknown,
+                statusRaw: statusRaw,
+                orderTime: "",
+                logistics: "",
+                pickupCode: "",
+                carrier: "",
+                imageURL: "",
+                goodsID: "",
+                updatedAt: Date()
+            ))
         }
 
+        out.sort { $0.updatedAt > $1.updatedAt }
         return out
     }
 
