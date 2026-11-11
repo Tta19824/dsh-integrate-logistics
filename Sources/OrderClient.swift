@@ -70,6 +70,11 @@ enum OrderClient {
     }
 
     /// 订单详情页抓到的接口数据（排查店铺名用）
+    /// 淘宝 / 京东订单页上的图片与时间摘要
+    static func digestFile(for platform: Platform) -> URL {
+        rawDirectory.appendingPathComponent("digest_\(platform.rawValue).json")
+    }
+
     static func detailPayloadFile(for platform: Platform) -> URL {
         rawDirectory().appendingPathComponent("payload_detail_\(platform.rawValue).json")
     }
@@ -158,7 +163,10 @@ enum OrderClient {
                 capture = one
                 orders = parsed
             }
-            if !orders.isEmpty { break }
+            if !orders.isEmpty {
+                orders = Self.applyDigest(orders, digest: one.digest)
+                break
+            }
         }
 
         guard let capture else { throw FetchError.badURL }
@@ -180,7 +188,8 @@ enum OrderClient {
         let pageErr = write(capture.text, to: pageFile(for: platform))
         let payloadErr = write(capture.payloadJSON, to: payloadFile(for: platform))
         let htmlErr = write(capture.html, to: htmlFile(for: platform))
-        info.writeError = [pageErr, payloadErr, htmlErr].compactMap { $0 }.joined(separator: " / ")
+        let digestErr = write(capture.digest, to: digestFile(for: platform))
+        info.writeError = [pageErr, payloadErr, htmlErr, digestErr].compactMap { $0 }.joined(separator: " / ")
 
         if let data = capture.payloadJSON.data(using: .utf8),
            let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
@@ -417,6 +426,31 @@ enum OrderClient {
         return "\(url.host ?? "")\(path)"
     }
 
+    /// 淘宝 PC 订单页的文字里没有图片和下单时间，只能从 DOM 摘要按纵向顺序补进去。
+    private static func applyDigest(_ orders: [Order], digest: String) -> [Order] {
+        guard let data = digest.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              !orders.isEmpty else { return orders }
+
+        let images = (object["imgs"] as? [[String: Any]] ?? [])
+            .compactMap { $0["s"] as? String }
+            .filter { !$0.isEmpty }
+        let times = (object["times"] as? [[String: Any]] ?? [])
+            .compactMap { $0["t"] as? String }
+            .filter { !$0.isEmpty }
+
+        var out = orders
+        for index in out.indices {
+            if index < images.count, out[index].imageURL.isEmpty {
+                out[index].imageURL = images[index]
+            }
+            if index < times.count, out[index].orderTime.isEmpty {
+                out[index].orderTime = times[index]
+            }
+        }
+        return out
+    }
+
     /// 调试用的可分享文件（不存在的也列出来，由界面显示「未生成」）
     static func debugFiles(for platform: Platform) -> [DebugFile] {
         [
@@ -424,7 +458,9 @@ enum OrderClient {
             DebugFile(id: "payload-\(platform.rawValue)", label: "\(platform.name) · 接口数据", url: payloadFile(for: platform)),
             DebugFile(id: "raw-\(platform.rawValue)", label: "\(platform.name) · 旧版原始页面", url: latestRawFile(for: platform)),
             DebugFile(id: "detail-\(platform.rawValue)", label: "\(platform.name) · 详情接口", url: detailPayloadFile(for: platform)),
-            DebugFile(id: "cards-\(platform.rawValue)", label: "\(platform.name) · 列表卡片", url: cardsFile(for: platform))
+            DebugFile(id: "cards-\(platform.rawValue)", label: "\(platform.name) · 列表卡片", url: cardsFile(for: platform)),
+            DebugFile(id: "html-\(platform.rawValue)", label: "\(platform.name) · 网页源码", url: htmlFile(for: platform)),
+            DebugFile(id: "digest-\(platform.rawValue)", label: "\(platform.name) · 图片时间", url: digestFile(for: platform))
         ]
     }
 }

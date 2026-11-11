@@ -22,6 +22,8 @@ final class WebOrderFetcher: NSObject {
         var cardsJSON: String = "[]"
         /// 渲染后的完整 HTML（PC 订单页是服务端渲染的，订单号只在这里）
         var html: String = ""
+        /// 图片与时间戳的摘要（按纵向坐标排序），用来给文字解析出来的订单补图和时间
+        var digest: String = "[]"
     }
 
     private var webView: WKWebView?
@@ -66,6 +68,35 @@ final class WebOrderFetcher: NSObject {
         })();
         """
     }
+
+    /// 只取「图片地址 + 时间戳」两种信息，连同纵向坐标，用来按顺序对到订单卡片上。
+    private static let digestJS = #"""
+    (function(){
+      var out = { imgs: [], times: [] };
+      try {
+        var im = document.images || [];
+        for (var i = 0; i < im.length && out.imgs.length < 80; i++) {
+          var s = im[i].currentSrc || im[i].src || "";
+          if (!/^https?:\/\//.test(s)) continue;
+          var r = im[i].getBoundingClientRect();
+          if (r.width < 40 || r.height < 40) continue;
+          out.imgs.push({ s: s, y: Math.round(r.top + window.scrollY) });
+        }
+        var all = document.body ? document.body.getElementsByTagName("*") : [];
+        for (var j = 0; j < all.length && out.times.length < 160; j++) {
+          var el = all[j];
+          if (el.children.length > 2) continue;
+          var t = (el.textContent || "").replace(/\s+/g, " ").trim();
+          if (t.length < 8 || t.length > 40) continue;
+          var m = t.match(/\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}/);
+          if (!m) continue;
+          var rr = el.getBoundingClientRect();
+          out.times.push({ t: m[0], y: Math.round(rr.top + window.scrollY) });
+        }
+      } catch (e) {}
+      return JSON.stringify(out);
+    })()
+    """#
 
     private let statsJS = """
     JSON.stringify({
@@ -204,6 +235,7 @@ final class WebOrderFetcher: NSObject {
             let freshCookie = await CookieStore.currentHeader(for: platform) ?? ""
             var html = (try? await wv.evaluateJavaScript("document.documentElement ? document.documentElement.outerHTML : ''")) as? String ?? ""
             if html.count > 1_500_000 { html = String(html.prefix(1_500_000)) }
+            let digest = (try? await wv.evaluateJavaScript(Self.digestJS)) as? String ?? "[]"
             let made = Capture(
                 finalURL: wv.url?.absoluteString ?? url.absoluteString,
                 title: title,
@@ -213,7 +245,8 @@ final class WebOrderFetcher: NSObject {
                 tried: tried,
                 cookieHeader: freshCookie,
                 cardsJSON: cards,
-                html: html
+                html: html,
+                digest: digest
             )
             if stopOnEntries && Self.payloadEntryCount(payload) == 0 {
                 // 这个地址没抓到接口响应，继续试下一个地址
