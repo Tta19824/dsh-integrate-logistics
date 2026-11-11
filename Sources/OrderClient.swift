@@ -126,10 +126,14 @@ enum OrderClient {
         guard !candidates.isEmpty else { throw FetchError.badURL }
 
         let capture = try await WebOrderFetcher.shared.capture(
+            platform: platform,
             urls: candidates,
             cookieHeader: cookie,
             seconds: seconds,
-            clickTabs: false
+            clickTabs: false,
+            minWait: 12,
+            strict: true,
+            scroll: true
         )
 
         if !capture.cookieHeader.isEmpty, capture.cookieHeader != cookie,
@@ -175,9 +179,10 @@ enum OrderClient {
             throw FetchError.note("\(platform.name) 的登录态失效了，点「重新登录」，登录完再刷新订单。")
         }
 
-        var note = info.entryCount > 0
-            ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单"
-            : "没抓到接口响应，页面文本 \(info.textChars) 字"
+        var note = "落点 \(shortPath(capture.finalURL))「\(capture.title.isEmpty ? "无标题" : capture.title)」"
+        note += info.entryCount > 0
+            ? " · 抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单"
+            : " · 没抓到接口响应，页面文本 \(info.textChars) 字"
         if orders.isEmpty, !info.snippet.isEmpty {
             note += "；页面开头：\(info.snippet.prefix(50))"
         }
@@ -202,7 +207,7 @@ enum OrderClient {
 
         guard !candidates.isEmpty else { throw FetchError.badURL }
 
-        let capture = try await WebOrderFetcher.shared.capture(urls: candidates, cookieHeader: cookie, seconds: 15)
+        let capture = try await WebOrderFetcher.shared.capture(platform: .pdd, urls: candidates, cookieHeader: cookie, seconds: 15)
 
         // 平台会在打开页面时轮换登录 token，抓完把最新的写回钥匙串，下次就不用重新登录
         if !capture.cookieHeader.isEmpty, CookieStore.hasLogin(capture.cookieHeader, platform: .pdd),

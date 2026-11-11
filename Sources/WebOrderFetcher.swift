@@ -132,12 +132,13 @@ final class WebOrderFetcher: NSObject {
     }
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
-    func capture(urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true) async throws -> Capture {
+    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true, minWait: Double = 0, strict: Bool = false, scroll: Bool = false) async throws -> Capture {
         let wv = reusableWebView ?? makeWebView()
         webView = wv
         await prefillCookies(cookieHeader)
 
         var tried: [String] = []
+        let startedAt = Date()
 
         for url in urls {
             var request = URLRequest(url: url)
@@ -152,7 +153,18 @@ final class WebOrderFetcher: NSObject {
                 loaded = true
             } else {
                 _ = try? await wv.load(request)
-                loaded = await waitForData(wv: wv, seconds: seconds)
+                loaded = await waitForData(wv: wv, seconds: seconds, strict: strict)
+                if scroll {
+                    for _ in 0..<3 {
+                        _ = try? await wv.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight)")
+                        try? await Task.sleep(nanoseconds: 900_000_000)
+                    }
+                    _ = await waitForData(wv: wv, seconds: max(2, seconds * 0.35), strict: strict)
+                }
+                if minWait > 0 {
+                    let cost = Date().timeIntervalSince(startedAt)
+                    if cost < minWait { try? await Task.sleep(nanoseconds: UInt64((minWait - cost) * 1_000_000_000)) }
+                }
             }
             warmURL = nil
 
@@ -186,7 +198,7 @@ final class WebOrderFetcher: NSObject {
 
             let cards = (try? await wv.evaluateJavaScript(Self.cardsJS)) as? String ?? "[]"
             let payload = (try? await wv.evaluateJavaScript("JSON.stringify(window.__dshCap || [])")) as? String ?? "[]"
-            let freshCookie = await CookieStore.currentHeader(for: .pdd) ?? ""
+            let freshCookie = await CookieStore.currentHeader(for: platform) ?? ""
             return Capture(
                 finalURL: wv.url?.absoluteString ?? url.absoluteString,
                 title: title,
@@ -292,7 +304,7 @@ final class WebOrderFetcher: NSObject {
         }
     }
 
-    private func waitForData(wv: WKWebView, seconds: Double) async -> Bool {
+    private func waitForData(wv: WKWebView, seconds: Double, strict: Bool = false) async -> Bool {
         let deadline = Date().addingTimeInterval(seconds)
         var first = true
         while Date() < deadline {
@@ -306,7 +318,12 @@ final class WebOrderFetcher: NSObject {
             let chars = (obj["t"] as? Int) ?? 0
             let hasList = (obj["o"] as? Bool) ?? false
             if hasList && bytes > 5_000 { return true }
-            if bytes > 20_000 || chars > 400 { return true }
+            if strict {
+                // 淘宝/京东首屏有大量静态文字，不能用「文字够多」当完成信号，只认接口响应
+                if bytes > 8_000 { return true }
+            } else if bytes > 20_000 || chars > 400 {
+                return true
+            }
         }
         return false
     }
