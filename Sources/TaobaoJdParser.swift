@@ -501,7 +501,7 @@ enum TaobaoJdParser {
 
             // 物流一句话（PC 版只有「运输中预计后天送达」这种）
             var logistics = ""
-            for line in block where line.contains("运输中") || line.contains("派送中") || line.contains("已签收") || line.contains("待揽收") || line.contains("已发货") {
+            for line in block where (line.contains("运输中") || line.contains("派送中") || line.contains("已签收") || line.contains("待揽收") || line.contains("已发货")) && tbStatuses[line] == nil {
                 logistics = line
                 break
             }
