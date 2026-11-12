@@ -452,9 +452,11 @@ struct LogisticsSheet: View {
         }
 
         var capturedChars = 0
+        var capturedText = ""
         let best: TaobaoJdParser.TbLogistics
         if let cap = try? await WebOrderFetcher.shared.captureTaobaoDetail(orderNo: order.orderNo, cookieHeader: cookie) {
             capturedChars = cap.text.count
+            capturedText = cap.text
             try? cap.text.data(using: .utf8)?.write(to: OrderClient.tbDetailFile(for: .tb), options: .atomic)
             try? cap.payloadJSON.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
             best = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
@@ -464,8 +466,14 @@ struct LogisticsSheet: View {
 
         events = best.events
         tracking = best.tracking
+        // 页面文字里没有这串数字，说明是从接口里误捞的，退回列表里那单的运单号
+        if tracking.isEmpty || (!capturedText.isEmpty && !capturedText.contains(tracking)) {
+            tracking = order.trackingNumber
+        }
         if !best.carrier.isEmpty {
             carrierLine = best.carrier
+        } else if !order.carrier.isEmpty {
+            carrierLine = order.carrier
         }
 
         if events.isEmpty {

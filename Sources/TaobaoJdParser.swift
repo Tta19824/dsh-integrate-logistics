@@ -728,7 +728,8 @@ enum TaobaoJdParser {
         if out.tracking.isEmpty {
             for line in text.components(separatedBy: "\n") {
                 let v = line.trimmingCharacters(in: .whitespaces)
-                guard v.count >= 10, v.count <= 16, v.allSatisfy({ $0.isNumber }) else { continue }
+                guard v.count >= 9, v.count <= 18, v.allSatisfy({ $0.isNumber }) else { continue }
+                guard v.count != 19 else { continue }
                 out.tracking = v
                 break
             }
@@ -738,7 +739,7 @@ enum TaobaoJdParser {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
 
-        let timePattern = #"^(?:今天|昨天|前天)?\s*(?:\d{1,2}-\d{1,2}\s+)?\d{1,2}:\d{2}(?::\d{2})?$"#
+        let timePattern = #"^(?:(?:今天|昨天|前天|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2})\s+)?\d{1,2}:\d{2}(?::\d{2})?$"#
 
         for (index, line) in lines.enumerated() {
             guard line.range(of: timePattern, options: .regularExpression) != nil else { continue }
@@ -776,37 +777,35 @@ enum TaobaoJdParser {
     }
 
     /// 「今天 16:23」「昨天 09:12」「11-12 16:23」「2026-11-12 16:23」统一成「MM-dd HH:mm」
+    /// 「今天 16:23」「昨天 09:12」「11-12 16:23」「2026-11-12 16:23:07」统一成「MM-dd HH:mm」
     private static func normalizeTraceTime(_ raw: String) -> String {
+        let text = raw.trimmingCharacters(in: .whitespaces)
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "zh_CN")
+        fmt.dateFormat = "MM-dd HH:mm"
         let calendar = Calendar.current
-        let now = Date()
-        var day = now
-        var rest = raw.trimmingCharacters(in: .whitespaces)
 
-        if rest.hasPrefix("今天") {
-            rest = String(rest.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-        } else if rest.hasPrefix("昨天") {
-            rest = String(rest.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-            day = calendar.date(byAdding: .day, value: -1, to: now) ?? now
-        } else if rest.hasPrefix("前天") {
-            rest = String(rest.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-            day = calendar.date(byAdding: .day, value: -2, to: now) ?? now
+        func two(_ v: Substring) -> String { String(format: "%02d", Int(v) ?? 0) }
+
+        let parts = text.split(separator: " ")
+        if parts.count == 2 {
+            let d = parts[0].split(separator: "-")
+            let h = parts[1].split(separator: ":")
+            if d.count == 3, h.count >= 2 {
+                return "\(two(d[1]))-\(two(d[2])) \(two(h[0])):\(two(h[1]))"
+            }
+            if d.count == 2, h.count >= 2 {
+                return "\(two(d[0]))-\(two(d[1])) \(two(h[0])):\(two(h[1]))"
+            }
+            let zh = String(parts[0])
+            if (zh == "今天" || zh == "昨天" || zh == "前天"), h.count >= 2 {
+                let offset = zh == "今天" ? 0 : (zh == "昨天" ? -1 : -2)
+                if let day = calendar.date(byAdding: .day, value: offset, to: Date()) {
+                    return fmt.string(from: day) + " \(two(h[0])):\(two(h[1]))"
+                }
+            }
         }
-
-        if let m = rest.range(of: #"^(\d{4})-(\d{1,2})-(\d{1,2})\s+"#, options: .regularExpression) {
-            let stamp = String(rest[m]).trimmingCharacters(in: .whitespaces)
-            return stamp + String(rest[m.upperBound...])
-        }
-
-        if let m = rest.range(of: #"^(\d{1,2})-(\d{1,2})\s+"#, options: .regularExpression) {
-            let stamp = String(rest[m]).trimmingCharacters(in: .whitespaces)
-            return stamp + " " + String(rest[m.upperBound...])
-        }
-
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "MM-dd"
-        let dayText = formatter.string(from: day)
-        return dayText + " " + rest
+        return text
     }
 
 }
