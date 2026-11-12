@@ -1,0 +1,26 @@
+name: probe-macos
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: none
+
+jobs:
+  probe14:
+    runs-on: macos-14
+    timeout-minutes: 8
+    steps:
+      - name: 看看 macos-14 能不能分到机器
+        run: |
+          uname -a
+          xcodebuild -version || true
+
+  probe15:
+    runs-on: macos-15
+    timeout-minutes: 8
+    steps:
+      - name: 看看 macos-15 能不能分到机器
+        run: |
+          uname -a
+          xcodebuild -version || true
