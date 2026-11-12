@@ -33,6 +33,27 @@ final class WebOrderFetcher: NSObject {
     /// 复用同一个 WebView：省掉每次刷新重建 + 重新握手的时间
     private var reusableWebView: WKWebView?
 
+    /// 在页面里找 innerText 含指定文字的链接，返回它的 href
+    static func findLinkJS(text: String) -> String {
+        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+        return """
+        (function(){
+          var target = '\(escaped)';
+          var list = document.querySelectorAll('a');
+          for (var i = 0; i < list.length; i++) {
+            var t = (list[i].innerText || '').trim();
+            if (t.indexOf(target) >= 0 && list[i].href) { return list[i].href; }
+          }
+          var all = document.querySelectorAll('div,span,button');
+          for (var j = 0; j < all.length; j++) {
+            var s = (all[j].innerText || '').trim();
+            if (s === target) { try { all[j].click(); return location.href; } catch (e) {} }
+          }
+          return '';
+        })()
+        """
+    }
+
     static var expandTraceJS: String {
         """
         (function(){
@@ -181,7 +202,7 @@ final class WebOrderFetcher: NSObject {
     }
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
-    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true, minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false) async throws -> Capture {
+    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true, minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil) async throws -> Capture {
         let wv = reusableWebView ?? makeWebView()
         webView = wv
         await prefillCookies(cookieHeader)
@@ -222,6 +243,17 @@ final class WebOrderFetcher: NSObject {
             if expand {
                 _ = try? await wv.evaluateJavaScript(Self.expandTraceJS)
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
+            }
+
+            // 订单详情页只给一句物流摘要，真正的轨迹在「查看物流详情」那一页
+            if let follow = followLink {
+                let js = Self.findLinkJS(text: follow)
+                if let href = (try? await wv.evaluateJavaScript(js)) as? String,
+                   href.hasPrefix("http"), let next = URL(string: href) {
+                    _ = try? await wv.load(URLRequest(url: next))
+                    _ = await waitForData(wv: wv, seconds: max(8, seconds * 0.8), strict: strict)
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                }
             }
 
             var title = (try? await wv.evaluateJavaScript("document.title || ''")) as? String ?? ""
@@ -308,7 +340,7 @@ final class WebOrderFetcher: NSObject {
         guard let url = URL(string: "https://buyertrade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=\(encoded)") else {
             throw FetchError.badURL
         }
-        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 14, clickTabs: false, strict: false)
+        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 14, clickTabs: false, strict: false, followLink: "查看物流详情")
     }
 
     /// 打开淘宝的物流轨迹页（和 App 里「查看物流」同一个页面），把接口响应抓回来。
