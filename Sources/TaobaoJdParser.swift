@@ -666,8 +666,8 @@ enum TaobaoJdParser {
         }
 
         let fromText = parseLogistics(text: text)
-        if out.events.isEmpty { out.events = fromText.events }
-        if out.tracking.isEmpty { out.tracking = fromText.tracking }
+        if fromText.events.count > out.events.count { out.events = fromText.events }
+        if !fromText.tracking.isEmpty { out.tracking = fromText.tracking }
         if out.carrier.isEmpty { out.carrier = fromText.carrier }
 
         return out
@@ -722,6 +722,16 @@ enum TaobaoJdParser {
         if out.tracking.isEmpty,
            let m = text.range(of: #"\b[A-Za-z]{2,4}\d{10,16}\b"#, options: .regularExpression) {
             out.tracking = String(text[m])
+        }
+        // 淘宝物流页里运单号就是裸的一行数字（如 79047620995550），
+        // 而订单号是 19 位、以 33 开头，所以只认 10–16 位的纯数字行
+        if out.tracking.isEmpty {
+            for line in text.components(separatedBy: "\n") {
+                let v = line.trimmingCharacters(in: .whitespaces)
+                guard v.count >= 10, v.count <= 16, v.allSatisfy({ $0.isNumber }) else { continue }
+                out.tracking = v
+                break
+            }
         }
 
         let lines = text.split(separator: "\n")

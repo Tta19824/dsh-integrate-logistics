@@ -308,7 +308,7 @@ final class WebOrderFetcher: NSObject {
         guard let url = URL(string: "https://buyertrade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=\(encoded)") else {
             throw FetchError.badURL
         }
-        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 14, clickTabs: false, strict: false, expand: true)
+        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 14, clickTabs: false, strict: false)
     }
 
     /// 打开淘宝的物流轨迹页（和 App 里「查看物流」同一个页面），把接口响应抓回来。

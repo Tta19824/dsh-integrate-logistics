@@ -451,9 +451,12 @@ struct LogisticsSheet: View {
             return
         }
 
+        var capturedChars = 0
         let best: TaobaoJdParser.TbLogistics
         if let cap = try? await WebOrderFetcher.shared.captureTaobaoDetail(orderNo: order.orderNo, cookieHeader: cookie) {
+            capturedChars = cap.text.count
             try? cap.text.data(using: .utf8)?.write(to: OrderClient.tbDetailFile(for: .tb), options: .atomic)
+            try? cap.payloadJSON.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
             best = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
         } else {
             best = TaobaoJdParser.TbLogistics()
@@ -466,7 +469,7 @@ struct LogisticsSheet: View {
         }
 
         if events.isEmpty {
-            message = "没读到物流轨迹。去「平台」页发我「淘宝 · 物流接口」那个文件，我按真实结构再改。"
+            message = "没读到物流轨迹（页面文字 \(capturedChars) 字）。去「平台」页发我「淘宝 · 订单详情页」那个文件。"
             loading = false
             return
         }
