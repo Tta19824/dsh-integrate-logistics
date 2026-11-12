@@ -306,7 +306,6 @@ final class WebOrderFetcher: NSObject {
                 tried: tried,
                 cookieHeader: freshCookie,
                 cardsJSON: cards,
-                followedURL: followed,
                 html: html,
                 digest: digest
             )
