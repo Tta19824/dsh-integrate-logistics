@@ -55,6 +55,30 @@ struct PlatformsView: View {
                     Text("点有大小的一行即可分享出去（微信 → 文件传输助手）。")
                 }
 
+                if let tb = app.orders.first(where: { $0.platform == .tb }) {
+                    Section {
+                        ForEach(Array(PddLink.tbCandidates(orderNo: tb.orderNo, itemID: tb.goodsID).enumerated()), id: \.offset) { pair in
+                            Button {
+                                if let url = URL(string: pair.element.url) {
+                                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(pair.element.name)
+                                    Text(pair.element.url)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("调试 · 淘宝跳转")
+                    } footer: {
+                        Text("挨个点，看哪个能进淘宝 App 的订单页；告诉我是第几个，我就把它设成默认。")
+                    }
+                }
+
                 Section {
                     if !capture.pageTitle.isEmpty {
                         HStack {

@@ -116,7 +116,7 @@ struct OrderRow: View {
                     .frame(height: rowHeight)
 
                     Button {
-                        PddLink.open(platform: order.platform, orderNo: order.orderNo)
+                        PddLink.open(platform: order.platform, orderNo: order.orderNo, itemID: order.goodsID)
                     } label: {
                         VStack(alignment: .center, spacing: 3) {
                             Text(order.shortStatusText)
@@ -443,7 +443,7 @@ struct LogisticsSheet: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
-    /// 淘宝：打开订单详情页读轨迹，详情页文字同时落盘供排查。
+    /// 淘宝：先打开物流轨迹页抓接口数据（和 App 里「查看物流」同一页），拿不到再退回订单详情页文字。
     private func loadTaobao() async {
         guard let cookie = await CookieStore.currentHeader(for: .tb), !cookie.isEmpty else {
             message = "还没登录淘宝，先去「平台」页登录"
@@ -451,15 +451,23 @@ struct LogisticsSheet: View {
             return
         }
 
-        guard let capture = try? await WebOrderFetcher.shared.captureTaobaoDetail(orderNo: order.orderNo, cookieHeader: cookie) else {
-            message = "打不开淘宝的订单详情页，稍后再试"
-            loading = false
-            return
+        var payload = ""
+        var text = ""
+
+        if let cap = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: order.orderNo, cookieHeader: cookie) {
+            payload = cap.payloadJSON
+            text = cap.text
+            try? payload.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
         }
 
-        try? capture.text.data(using: .utf8)?.write(to: OrderClient.tbDetailFile(for: .tb), options: .atomic)
+        var info = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: payload, text: text)
 
-        let info = TaobaoJdParser.parseLogistics(text: capture.text)
+        if info.events.isEmpty,
+           let cap = try? await WebOrderFetcher.shared.captureTaobaoDetail(orderNo: order.orderNo, cookieHeader: cookie) {
+            try? cap.text.data(using: .utf8)?.write(to: OrderClient.tbDetailFile(for: .tb), options: .atomic)
+            info = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
+        }
+
         events = info.events
         tracking = info.tracking
         if !info.carrier.isEmpty {
@@ -467,7 +475,7 @@ struct LogisticsSheet: View {
         }
 
         if events.isEmpty {
-            message = "详情页里没找到轨迹。去「平台」页发我「淘宝 · 订单详情页」那个文件。"
+            message = "没读到物流轨迹。去「平台」页发我「淘宝 · 物流接口」那个文件，我按真实结构再改。"
             loading = false
             return
         }

@@ -79,6 +79,11 @@ enum OrderClient {
         rawDirectory().appendingPathComponent("payload_detail_\(platform.rawValue).json")
     }
 
+    /// 淘宝物流轨迹页抓回来的接口数据（排查轨迹用）
+    static func tbLogisticsFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("tb_logistics_\(platform.rawValue).json")
+    }
+
     /// 淘宝订单详情页的页面文字（排查快递公司与轨迹用）
     static func tbDetailFile(for platform: Platform) -> URL {
         rawDirectory().appendingPathComponent("tb_detail_\(platform.rawValue).txt")
@@ -476,6 +481,7 @@ enum OrderClient {
             DebugFile(id: "detail-\(platform.rawValue)", label: "\(platform.name) · 详情接口", url: detailPayloadFile(for: platform)),
             DebugFile(id: "cards-\(platform.rawValue)", label: "\(platform.name) · 列表卡片", url: cardsFile(for: platform)),
             DebugFile(id: "html-\(platform.rawValue)", label: "\(platform.name) · 网页源码", url: htmlFile(for: platform)),
+            DebugFile(id: "tblogi-\(platform.rawValue)", label: "\(platform.name) · 物流接口", url: tbLogisticsFile(for: platform)),
             DebugFile(id: "digest-\(platform.rawValue)", label: "\(platform.name) · 图片时间", url: digestFile(for: platform)),
             DebugFile(id: "tbdetail-\(platform.rawValue)", label: "\(platform.name) · 订单详情页", url: tbDetailFile(for: platform))
         ]

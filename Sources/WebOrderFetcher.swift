@@ -290,6 +290,15 @@ final class WebOrderFetcher: NSObject {
         return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 18, clickTabs: false, strict: false)
     }
 
+    /// 打开淘宝的物流轨迹页（和 App 里「查看物流」同一个页面），把接口响应抓回来。
+    func captureTaobaoLogistics(orderNo: String, cookieHeader: String) async throws -> Capture {
+        let encoded = orderNo.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? orderNo
+        guard let url = URL(string: "https://market.m.taobao.com/app/dinamic/pc-trade-logistics/home.html?orderId=\(encoded)&entrance=pc") else {
+            throw FetchError.badURL
+        }
+        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 16, clickTabs: false, strict: true, scroll: true)
+    }
+
     /// 打开商品详情页，用来捞真实店铺名（订单接口里的店铺是品牌馆名）。
     func captureGoods(goodsID: String, cookieHeader: String) async throws -> Capture {
         guard let url = URL(string: "https://mobile.pinduoduo.com/goods.html?goods_id=\(goodsID)") else {

@@ -652,6 +652,48 @@ enum TaobaoJdParser {
         return out
     }
 
+    /// 淘宝物流轨迹：优先读轨迹页的接口数据（字段最全），读不到再退回详情页文字。
+    static func parseTaobaoLogistics(payloadJSON: String, text: String) -> TbLogistics {
+        var out = TbLogistics()
+
+        if let data = payloadJSON.data(using: .utf8) {
+            out.events = ShipTracking.events(from: data)
+            let track = ShipTracking.trackingNumber(from: data)
+            if !track.isEmpty { out.tracking = track }
+            if let obj = try? JSONSerialization.jsonObject(with: data) {
+                out.carrier = findCarrier(in: obj, depth: 0)
+            }
+        }
+
+        let fromText = parseLogistics(text: text)
+        if out.events.isEmpty { out.events = fromText.events }
+        if out.tracking.isEmpty { out.tracking = fromText.tracking }
+        if out.carrier.isEmpty { out.carrier = fromText.carrier }
+
+        return out
+    }
+
+    private static let carrierKeys = ["cpName", "carrierName", "carrier", "companyName", "comName", "expressName", "cp_name"]
+
+    private static func findCarrier(in object: Any, depth: Int) -> String {
+        guard depth <= 14 else { return "" }
+        if let dict = object as? [String: Any] {
+            for key in carrierKeys {
+                if let v = dict[key] as? String, !v.isEmpty, v.count <= 20 { return v }
+            }
+            for (_, value) in dict {
+                let hit = findCarrier(in: value, depth: depth + 1)
+                if !hit.isEmpty { return hit }
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                let hit = findCarrier(in: value, depth: depth + 1)
+                if !hit.isEmpty { return hit }
+            }
+        }
+        return ""
+    }
+
     struct TbLogistics {
         var carrier = ""
         var tracking = ""
