@@ -443,7 +443,7 @@ struct LogisticsSheet: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
-    /// 淘宝：先打开物流轨迹页抓接口数据（和 App 里「查看物流」同一页），拿不到再退回订单详情页文字。
+    /// 淘宝：详情页文字 + 物流轨迹页接口，两份都试，取轨迹更全的那份。
     private func loadTaobao() async {
         guard let cookie = await CookieStore.currentHeader(for: .tb), !cookie.isEmpty else {
             message = "还没登录淘宝，先去「平台」页登录"
@@ -451,27 +451,31 @@ struct LogisticsSheet: View {
             return
         }
 
-        var payload = ""
-        var text = ""
+        var best = TaobaoJdParser.TbLogistics()
 
-        if let cap = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: order.orderNo, cookieHeader: cookie) {
-            payload = cap.payloadJSON
-            text = cap.text
-            try? payload.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
-        }
-
-        var info = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: payload, text: text)
-
-        if info.events.isEmpty,
-           let cap = try? await WebOrderFetcher.shared.captureTaobaoDetail(orderNo: order.orderNo, cookieHeader: cookie) {
+        // ① 订单详情页的页面文字（上一版靠它，能出轨迹）
+        if let cap = try? await WebOrderFetcher.shared.captureTaobaoDetail(orderNo: order.orderNo, cookieHeader: cookie) {
             try? cap.text.data(using: .utf8)?.write(to: OrderClient.tbDetailFile(for: .tb), options: .atomic)
-            info = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
+            let info = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
+            if info.events.count > best.events.count { best = info }
         }
 
-        events = info.events
-        tracking = info.tracking
-        if !info.carrier.isEmpty {
-            carrierLine = info.carrier
+        // ② 物流轨迹页的接口数据（更结构化，但页面结构可能变）
+        if let cap = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: order.orderNo, cookieHeader: cookie) {
+            try? cap.payloadJSON.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
+            let info = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
+            if info.events.count > best.events.count {
+                best = info
+            } else {
+                if best.tracking.isEmpty { best.tracking = info.tracking }
+                if best.carrier.isEmpty { best.carrier = info.carrier }
+            }
+        }
+
+        events = best.events
+        tracking = best.tracking
+        if !best.carrier.isEmpty {
+            carrierLine = best.carrier
         }
 
         if events.isEmpty {
