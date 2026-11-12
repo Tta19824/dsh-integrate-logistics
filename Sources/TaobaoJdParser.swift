@@ -21,8 +21,130 @@ enum TaobaoJdParser {
     private static let jdTimeKeys = ["orderTime", "createTime", "orderDate", "submitTime"]
 
     static func parse(platform: Platform, text: String, payloadJSON: String, html: String = "") -> [Order] {
+        // 淘宝电脑版订单页的订单数据在 mtop.taobao.order.queryboughtlistv2 里，字段最全，优先用
+        if platform == .tb {
+            let fromBoughtList = parseTaobaoBoughtList(payloadJSON: payloadJSON)
+            if !fromBoughtList.isEmpty { return fromBoughtList }
+        }
         let fromJSON = parseJSON(platform: platform, payloadJSON: payloadJSON)
         if !fromJSON.isEmpty { return fromJSON }
+
+    // MARK: - 淘宝电脑版 queryboughtlistv2
+
+    private static func fields(_ value: Any?) -> [String: Any]? {
+        (value as? [String: Any])?["fields"] as? [String: Any]
+    }
+
+    /// 淘宝「已买到的宝贝」接口：每个订单由 orderItemInfo_/shopInfo_/orderStatus_/orderPayment_/orderLogistics_ 几块拼成。
+    static func parseTaobaoBoughtList(payloadJSON: String) -> [Order] {
+        guard let data = payloadJSON.data(using: .utf8),
+              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+
+        var out: [Order] = []
+        var seen = Set<String>()
+
+        for entry in entries {
+            guard let body = entry["b"] as? String, body.contains("orderItemInfo"),
+                  let bodyData = body.data(using: .utf8),
+                  let root = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
+                  let dataDict = (root["data"] as? [String: Any])?["data"] as? [String: Any] else {
+                continue
+            }
+
+            var orderNos = Set<String>()
+            for key in dataDict.keys where key.hasPrefix("orderItemInfo_") {
+                let parts = key.split(separator: "_")
+                if parts.count >= 2 {
+                    let sn = String(parts[1])
+                    if sn.count >= 15 { orderNos.insert(sn) }
+                }
+            }
+
+            for sn in orderNos {
+                guard !seen.contains(sn) else { continue }
+
+                let shop = fields(dataDict["shopInfo_\(sn)"]) ?? [:]
+                var item: [String: Any] = [:]
+                if let info = fields(dataDict["orderItemInfo_\(sn)_\(sn)"]) {
+                    item = info["item"] as? [String: Any] ?? [:]
+                } else {
+                    for key in dataDict.keys where key.hasPrefix("orderItemInfo_\(sn)_") {
+                        if let info = fields(dataDict[key]), let it = info["item"] as? [String: Any] {
+                            item = it
+                            break
+                        }
+                    }
+                }
+                let pay = fields(dataDict["orderPayment_\(sn)"]) ?? [:]
+                let st = fields(dataDict["orderStatus_\(sn)"]) ?? [:]
+                let logi = fields(dataDict["orderLogistics_\(sn)"]) ?? [:]
+
+                let title = (item["title"] as? String) ?? ""
+                guard !title.isEmpty else { continue }
+
+                var amount = ""
+                if let actual = pay["actualFee"] as? [String: Any] {
+                    amount = (actual["value"] as? String) ?? ""
+                }
+                if amount.isEmpty, let priceInfo = item["priceInfo"] as? [String: Any] {
+                    amount = (priceInfo["actualTotalFee"] as? String) ?? ""
+                }
+                amount = amount.replacingOccurrences(of: "￥", with: "")
+                    .replacingOccurrences(of: "¥", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+
+                var image = (item["pic"] as? String) ?? ""
+                if image.hasPrefix("//") { image = "https:" + image }
+
+                var carrier = ""
+                var tracking = (st["mailNo"] as? String) ?? ""
+                if let preview = logi["packagePreview"] as? [String: Any],
+                   let list = preview["packageViewList"] as? [[String: Any]],
+                   let first = list.first {
+                    carrier = (first["cpName"] as? String) ?? ""
+                    if tracking.isEmpty { tracking = (first["mailNo"] as? String) ?? "" }
+                }
+
+                var logistics = ""
+                let stTitle = (st["title"] as? String) ?? ""
+                let stSub = (st["subTitle"] as? String) ?? ""
+                logistics = (stTitle + stSub).trimmingCharacters(in: .whitespaces)
+
+                let statusRaw = (shop["tradeTitle"] as? String) ?? ""
+                let day = (shop["createDay"] as? String) ?? ""
+                let clock = (shop["createTime"] as? String) ?? ""
+                var orderTime = day
+                if let r = clock.range(of: #"\d{2}:\d{2}"#, options: .regularExpression) {
+                    orderTime = "\(day) \(String(clock[r]))"
+                }
+                let shopName = (shop["shopName"] as? String) ?? ""
+
+                seen.insert(sn)
+                out.append(Order(
+                    id: Order.makeID(platform: .tb, orderNo: sn),
+                    platform: .tb,
+                    orderNo: sn,
+                    title: title,
+                    shopName: shopName,
+                    amount: amount,
+                    status: tbStatuses[statusRaw] ?? .unknown,
+                    statusRaw: statusRaw,
+                    orderTime: orderTime,
+                    logistics: logistics,
+                    pickupCode: "",
+                    carrier: carrier,
+                    imageURL: image,
+                    goodsID: (item["itemId"] as? String) ?? "",
+                    updatedAt: Date()
+                ))
+            }
+        }
+
+        return out
+    }
+
         let fromHTML = parseHTML(platform: platform, html: html)
         if !fromHTML.isEmpty { return fromHTML }
         let pc = parsePcText(platform: platform, text: text)
