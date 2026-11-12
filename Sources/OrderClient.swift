@@ -135,9 +135,21 @@ enum OrderClient {
         let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
         // 每个地址先用手机 UA 试；PC 版地址再补一次桌面 UA
-        var plan: [(String, String)] = urls.map { ($0, mobileUA) }
-        for url in urls where url.contains("buyertrade") || url.contains("trade/itemlist") {
-            plan.append((url, desktopUA))
+        // 淘宝的 H5 订单页没有下单时间和快递公司，PC 版（buyertrade）才有；所以 PC 版排前面。
+        var plan: [(String, String)] = []
+        if platform == .tb {
+            for url in urls where url.contains("buyertrade") || url.contains("trade/itemlist") {
+                plan.append((url, desktopUA))
+                plan.append((url, mobileUA))
+            }
+            for url in urls where !(url.contains("buyertrade") || url.contains("trade/itemlist")) {
+                plan.append((url, mobileUA))
+            }
+        } else {
+            plan = urls.map { ($0, mobileUA) }
+            for url in urls where url.contains("buyertrade") || url.contains("trade/itemlist") {
+                plan.append((url, desktopUA))
+            }
         }
 
         var capture: WebOrderFetcher.Capture?

@@ -77,6 +77,7 @@ final class WebOrderFetcher: NSObject {
         var im = document.images || [];
         for (var i = 0; i < im.length && out.imgs.length < 80; i++) {
           var s = im[i].currentSrc || im[i].src || "";
+          if (/^\/\//.test(s)) s = "https:" + s;
           if (!/^https?:\/\//.test(s)) continue;
           var r = im[i].getBoundingClientRect();
           if (r.width < 40 || r.height < 40) continue;
