@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # 本机不在线时也能反复重试：每 20 分钟自动跑一次
+    - cron: "*/20 * * * *"
 
 permissions:
   contents: write
