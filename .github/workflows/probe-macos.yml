@@ -7,6 +7,16 @@ permissions:
   contents: none
 
 jobs:
+  probe_latest:
+    runs-on: macos-latest
+    timeout-minutes: 8
+    steps:
+      - name: macos-latest 能不能分到机器
+        run: |
+          uname -m
+          sw_vers || true
+          xcodebuild -version || true
+
   probe14:
     runs-on: macos-14
     timeout-minutes: 8
