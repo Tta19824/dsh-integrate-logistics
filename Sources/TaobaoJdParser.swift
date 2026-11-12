@@ -28,6 +28,12 @@ enum TaobaoJdParser {
         }
         let fromJSON = parseJSON(platform: platform, payloadJSON: payloadJSON)
         if !fromJSON.isEmpty { return fromJSON }
+        let fromHTML = parseHTML(platform: platform, html: html)
+        if !fromHTML.isEmpty { return fromHTML }
+        let pc = parsePcText(platform: platform, text: text)
+        if !pc.isEmpty { return pc }
+        return parseText(platform: platform, text: text)
+    }
 
     // MARK: - 淘宝电脑版 queryboughtlistv2
 
@@ -143,13 +149,6 @@ enum TaobaoJdParser {
         }
 
         return out
-    }
-
-        let fromHTML = parseHTML(platform: platform, html: html)
-        if !fromHTML.isEmpty { return fromHTML }
-        let pc = parsePcText(platform: platform, text: text)
-        if !pc.isEmpty { return pc }
-        return parseText(platform: platform, text: text)
     }
 
     // MARK: - 接口 JSON
