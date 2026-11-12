@@ -307,7 +307,8 @@ final class WebOrderFetcher: NSObject {
                 cookieHeader: freshCookie,
                 cardsJSON: cards,
                 html: html,
-                digest: digest
+                digest: digest,
+                followedURL: followed
             )
             if stopOnEntries && Self.payloadEntryCount(payload) == 0 {
                 // 这个地址没抓到接口响应，继续试下一个地址
