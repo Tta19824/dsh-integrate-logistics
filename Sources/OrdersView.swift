@@ -263,6 +263,7 @@ struct LogisticsSheet: View {
     @State private var path: [CLLocationCoordinate2D] = []
     @State private var remaining: [CLLocationCoordinate2D] = []
     @State private var tracking = ""
+    @State private var carrierLine = ""
     @State private var loading = true
     @State private var message = ""
 
@@ -418,7 +419,7 @@ struct LogisticsSheet: View {
 
     private var trackingRow: some View {
         HStack(spacing: 8) {
-            Text("快递单号")
+            Text(carrierLine.isEmpty ? "快递单号" : carrierLine)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(tracking.isEmpty ? "暂未获取" : tracking)
@@ -442,7 +443,51 @@ struct LogisticsSheet: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
+    /// 淘宝：打开订单详情页读轨迹，详情页文字同时落盘供排查。
+    private func loadTaobao() async {
+        guard let cookie = await CookieStore.currentHeader(for: .tb), !cookie.isEmpty else {
+            message = "还没登录淘宝，先去「平台」页登录"
+            loading = false
+            return
+        }
+
+        guard let capture = try? await WebOrderFetcher.shared.captureTaobaoDetail(orderNo: order.orderNo, cookieHeader: cookie) else {
+            message = "打不开淘宝的订单详情页，稍后再试"
+            loading = false
+            return
+        }
+
+        try? capture.text.data(using: .utf8)?.write(to: OrderClient.tbDetailFile(for: .tb), options: .atomic)
+
+        let info = TaobaoJdParser.parseLogistics(text: capture.text)
+        events = info.events
+        tracking = info.tracking
+        if !info.carrier.isEmpty {
+            carrierLine = info.carrier
+        }
+
+        if events.isEmpty {
+            message = "详情页里没找到轨迹。去「平台」页发我「淘宝 · 订单详情页」那个文件。"
+            loading = false
+            return
+        }
+
+        let names = ShipTracking.placeNames(in: events)
+        if !names.isEmpty {
+            coordinates = await ShipTracking.coordinates(for: names)
+        }
+        if !coordinates.isEmpty {
+            loading = false
+            path = await RoutePlanner.path(through: coordinates)
+        }
+        loading = false
+    }
+
     private func load() async {
+        if order.platform == .tb {
+            await loadTaobao()
+            return
+        }
         guard let cookie = await CookieStore.currentHeader(for: .pdd), !cookie.isEmpty else {
             message = "还没登录拼多多，先去「平台」页登录"
             loading = false

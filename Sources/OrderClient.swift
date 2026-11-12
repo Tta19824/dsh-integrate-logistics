@@ -79,6 +79,11 @@ enum OrderClient {
         rawDirectory().appendingPathComponent("payload_detail_\(platform.rawValue).json")
     }
 
+    /// 淘宝订单详情页的页面文字（排查快递公司与轨迹用）
+    static func tbDetailFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("tb_detail_\(platform.rawValue).txt")
+    }
+
     static func fetch(platform: Platform) async throws -> FetchOutcome {
         guard let cookie = CookieStore.load(for: platform), !cookie.isEmpty else {
             throw FetchError.noCookie
@@ -471,7 +476,8 @@ enum OrderClient {
             DebugFile(id: "detail-\(platform.rawValue)", label: "\(platform.name) · 详情接口", url: detailPayloadFile(for: platform)),
             DebugFile(id: "cards-\(platform.rawValue)", label: "\(platform.name) · 列表卡片", url: cardsFile(for: platform)),
             DebugFile(id: "html-\(platform.rawValue)", label: "\(platform.name) · 网页源码", url: htmlFile(for: platform)),
-            DebugFile(id: "digest-\(platform.rawValue)", label: "\(platform.name) · 图片时间", url: digestFile(for: platform))
+            DebugFile(id: "digest-\(platform.rawValue)", label: "\(platform.name) · 图片时间", url: digestFile(for: platform)),
+            DebugFile(id: "tbdetail-\(platform.rawValue)", label: "\(platform.name) · 订单详情页", url: tbDetailFile(for: platform))
         ]
     }
 }

@@ -530,4 +530,55 @@ enum TaobaoJdParser {
 
         return out
     }
+
+    struct TbLogistics {
+        var carrier = ""
+        var tracking = ""
+        var events: [ShipEvent] = []
+    }
+
+    /// 从淘宝订单详情页的页面文字里读快递公司、运单号和轨迹。
+    static func parseLogistics(text: String) -> TbLogistics {
+        var out = TbLogistics()
+
+        let carriers = ["顺丰速运", "顺丰", "中通快递", "中通", "圆通速递", "圆通", "韵达快递", "韵达",
+                        "申通快递", "申通", "极兔速递", "极兔", "邮政快递包裹", "中国邮政", "EMS",
+                        "德邦快递", "德邦", "京东物流", "百世快递", "丰网速运", "菜鸟"]
+        for c in carriers where text.contains(c) {
+            out.carrier = c
+            break
+        }
+
+        if let hit = text.range(of: #"(?:运单号|快递单号|物流单号|运单编号)[：:\s]*([A-Za-z0-9]{8,24})"#, options: .regularExpression) {
+            let raw = String(text[hit])
+            if let m = raw.range(of: #"[A-Za-z0-9]{8,24}$"#, options: .regularExpression) {
+                out.tracking = String(raw[m])
+            }
+        }
+
+        let lines = text.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        var pending = ""
+        for line in lines {
+            if let r = line.range(of: #"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(:\d{2})?"#, options: .regularExpression) {
+                let ts = String(line[r])
+                let rest = String(line[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+                if rest.count >= 4 {
+                    out.events.append(ShipEvent(id: out.events.count, time: ts, desc: rest))
+                    pending = ""
+                } else {
+                    pending = ts
+                }
+                continue
+            }
+            guard !pending.isEmpty, line.count >= 4, line.count <= 120 else { continue }
+            if line.contains("运单号") || line.contains("复制") || line.contains("#EFR") { continue }
+            out.events.append(ShipEvent(id: out.events.count, time: pending, desc: line))
+            pending = ""
+        }
+
+        return out
+    }
 }
