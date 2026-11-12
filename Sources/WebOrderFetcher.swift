@@ -24,6 +24,8 @@ final class WebOrderFetcher: NSObject {
         var html: String = ""
         /// 图片与时间戳的摘要（按纵向坐标排序），用来给文字解析出来的订单补图和时间
         var digest: String = "[]"
+        /// 跟进的链接（「查看物流」点进去的那个地址），没跟进就是空
+        var followedURL: String = ""
     }
 
     private var webView: WKWebView?
@@ -212,6 +214,7 @@ final class WebOrderFetcher: NSObject {
 
         var tried: [String] = []
         var best: Capture?
+        var followed = ""
         let startedAt = Date()
 
         for url in urls {
@@ -253,6 +256,7 @@ final class WebOrderFetcher: NSObject {
                 let js = Self.findLinkJS(text: follow)
                 if let href = (try? await wv.evaluateJavaScript(js)) as? String,
                    href.hasPrefix("http"), let next = URL(string: href) {
+                    followed = href
                     _ = try? await wv.load(URLRequest(url: next))
                     _ = await waitForData(wv: wv, seconds: max(8, seconds * 0.8), strict: strict)
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
@@ -302,6 +306,7 @@ final class WebOrderFetcher: NSObject {
                 tried: tried,
                 cookieHeader: freshCookie,
                 cardsJSON: cards,
+                followedURL: followed,
                 html: html,
                 digest: digest
             )

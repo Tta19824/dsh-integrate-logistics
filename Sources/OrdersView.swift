@@ -453,15 +453,31 @@ struct LogisticsSheet: View {
 
         var capturedChars = 0
         var capturedText = ""
-        let best: TaobaoJdParser.TbLogistics
+        var landedURL = ""
+        var loggedSecond = ""
+        var followedURL = ""
+        var best = TaobaoJdParser.TbLogistics()
         if let cap = try? await WebOrderFetcher.shared.captureTaobaoDetail(orderNo: order.orderNo, cookieHeader: cookie) {
             capturedChars = cap.text.count
             capturedText = cap.text
+            landedURL = cap.finalURL
+            followedURL = cap.followedURL
             try? cap.text.data(using: .utf8)?.write(to: OrderClient.tbDetailFile(for: .tb), options: .atomic)
             try? cap.payloadJSON.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
             best = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
-        } else {
-            best = TaobaoJdParser.TbLogistics()
+        }
+
+        // 跟进没拿到轨迹时，直接开物流详情页再试一次
+        if best.events.isEmpty,
+           let cap2 = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: order.orderNo, cookieHeader: cookie) {
+            try? cap2.text.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
+            let second = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap2.payloadJSON, text: cap2.text)
+            if second.events.count > best.events.count { best = second }
+            capturedText = cap2.text
+            capturedChars = cap2.text.count
+            if best.tracking.isEmpty { best.tracking = second.tracking }
+            if best.carrier.isEmpty { best.carrier = second.carrier }
+            loggedSecond = "\(cap2.text.count)"
         }
 
         events = best.events
@@ -477,7 +493,10 @@ struct LogisticsSheet: View {
         }
 
         if events.isEmpty {
-            message = "没读到物流轨迹（页面文字 \(capturedChars) 字）。去「平台」页发我「淘宝 · 订单详情页」那个文件。"
+            let landing = landedURL.replacingOccurrences(of: "https://", with: "").prefix(60)
+            let followed = followedURL.isEmpty ? "没找到可跟进的链接" : ("跟进 " + followedURL.replacingOccurrences(of: "https://", with: "").prefix(50))
+            let extra = loggedSecond.isEmpty ? "" : "｜物流页 \(loggedSecond) 字"
+            message = "没读到物流轨迹（\(capturedChars) 字｜落点 \(landing)｜\(followed)\(extra)）"
             loading = false
             return
         }
