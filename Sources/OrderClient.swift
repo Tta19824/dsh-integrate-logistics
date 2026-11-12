@@ -109,10 +109,9 @@ enum OrderClient {
             platform: .tb,
             cookie: cookie,
             urls: [
-                "https://h5.m.taobao.com/mlapp/olist.html",
                 "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm"
             ],
-            seconds: 22
+            seconds: 16
         )
     }
 

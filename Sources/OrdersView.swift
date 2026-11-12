@@ -116,7 +116,7 @@ struct OrderRow: View {
                     .frame(height: rowHeight)
 
                     Button {
-                        PddLink.openDefault(orderNo: order.orderNo)
+                        PddLink.open(platform: order.platform, orderNo: order.orderNo)
                     } label: {
                         VStack(alignment: .center, spacing: 3) {
                             Text(order.shortStatusText)

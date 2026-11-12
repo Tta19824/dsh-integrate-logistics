@@ -81,7 +81,8 @@ final class AppState: ObservableObject {
     }
 
     func refreshAll() {
-        let platforms = Platform.allCases.filter { isLoggedIn($0) }
+        // 京东先断开：抓取路径还没跑通，留着会让每次刷新多花几十秒
+        let platforms = Platform.allCases.filter { $0 != .jd && isLoggedIn($0) }
         guard !platforms.isEmpty else {
             show("还没有登录任何平台，先去「平台」页登录")
             return

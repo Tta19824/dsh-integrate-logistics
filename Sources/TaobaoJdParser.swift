@@ -25,6 +25,8 @@ enum TaobaoJdParser {
         if !fromJSON.isEmpty { return fromJSON }
         let fromHTML = parseHTML(platform: platform, html: html)
         if !fromHTML.isEmpty { return fromHTML }
+        let pc = parsePcText(platform: platform, text: text)
+        if !pc.isEmpty { return pc }
         return parseText(platform: platform, text: text)
     }
 
@@ -413,5 +415,119 @@ enum TaobaoJdParser {
             hash = (hash &* 33) &+ Int(scalar.value)
         }
         return hash
+    }
+
+    // MARK: - 淘宝 PC 版订单页（服务端渲染）
+
+    /// PC 版 innerText 是「2026-11-11 / 订单号: 3317… / 店铺 / 订单详情 / 状态 / 标题 [交易快照] / 规格 / 标签 / ￥原价 / ￥实付 / x1 / 运输中预计后天送达 / 实付款￥0.53 / 含运费:￥0.00」。
+    static func parsePcText(platform: Platform, text: String) -> [Order] {
+        let raw = text.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        let lines = raw.filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return [] }
+
+        var starts: [Int] = []
+        for (index, line) in lines.enumerated() where line.hasPrefix("订单号") {
+            starts.append(index)
+        }
+        guard !starts.isEmpty else { return [] }
+
+        var out: [Order] = []
+        var seen = Set<String>()
+
+        for (n, start) in starts.enumerated() {
+            let end = n + 1 < starts.count ? starts[n + 1] : lines.count
+            let block = Array(lines[start..<end])
+            guard let orderLine = block.first else { continue }
+            let orderNo = orderLine.replacingOccurrences(of: "订单号", with: "")
+                .replacingOccurrences(of: ":", with: "")
+                .replacingOccurrences(of: "：", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            guard orderNo.count >= 8 else { continue }
+
+            // 日期在「订单号」上一行
+            var date = ""
+            if start > 0, lines[start - 1].range(of: #"^\d{4}-\d{1,2}-\d{1,2}$"#, options: .regularExpression) != nil {
+                date = lines[start - 1]
+            }
+
+            // 店铺：订单号下一行（跳过「订单详情」这种按钮文字）
+            var shop = ""
+            for line in block.dropFirst() {
+                if line == "订单详情" { continue }
+                shop = line
+                break
+            }
+
+            // 状态
+            var statusRaw = ""
+            for line in block where tbStatuses[line] != nil {
+                statusRaw = line
+                break
+            }
+
+            // 标题：带 [交易快照] 的那行
+            var title = ""
+            for line in block where line.contains("[交易快照]") {
+                title = line.replacingOccurrences(of: "[交易快照]", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+                break
+            }
+            if title.isEmpty {
+                for line in block where line.count >= 8 && !line.hasPrefix("￥") && !line.hasPrefix("订单号") {
+                    title = line
+                    break
+                }
+            }
+            guard !title.isEmpty else { continue }
+
+            // 金额：实付款￥x → 合计￥x → 最后一个 ￥x
+            var amount = ""
+            let joined = block.joined(separator: " ")
+            for key in ["实付款￥", "实付款¥", "合计￥", "合计¥"] {
+                if let range = joined.range(of: key) {
+                    let rest = joined[range.upperBound...]
+                    let number = rest.prefix(while: { $0.isNumber || $0 == "." })
+                    if !number.isEmpty { amount = String(number); break }
+                }
+            }
+            if amount.isEmpty {
+                let matches = block.compactMap { line -> String? in
+                    guard line.hasPrefix("￥") else { return nil }
+                    let value = String(line.dropFirst())
+                    return value.range(of: #"^[0-9]+(\.[0-9]{1,2})?$"#, options: .regularExpression) != nil ? value : nil
+                }
+                amount = matches.last ?? ""
+            }
+
+            // 物流一句话（PC 版只有「运输中预计后天送达」这种）
+            var logistics = ""
+            for line in block where line.contains("运输中") || line.contains("派送中") || line.contains("已签收") || line.contains("待揽收") || line.contains("已发货") {
+                logistics = line
+                break
+            }
+
+            guard !seen.contains(orderNo) else { continue }
+            seen.insert(orderNo)
+
+            out.append(Order(
+                id: Order.makeID(platform: platform, orderNo: orderNo),
+                platform: platform,
+                orderNo: orderNo,
+                title: title,
+                shopName: shop,
+                amount: amount,
+                status: tbStatuses[statusRaw] ?? .unknown,
+                statusRaw: statusRaw,
+                orderTime: date,
+                logistics: logistics,
+                pickupCode: "",
+                carrier: "",
+                imageURL: "",
+                goodsID: "",
+                updatedAt: Date()
+            ))
+        }
+
+        return out
     }
 }
