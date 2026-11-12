@@ -466,9 +466,9 @@ struct LogisticsSheet: View {
 
         events = best.events
         tracking = best.tracking
-        // 页面文字里没有这串数字，说明是从接口里误捞的，退回列表里那单的运单号
-        if tracking.isEmpty || (!capturedText.isEmpty && !capturedText.contains(tracking)) {
-            tracking = order.trackingNumber
+        // 页面文字里找不到这串数字，说明是从接口里误捞的；宁可不显示，也别显示错的
+        if !tracking.isEmpty && !capturedText.isEmpty && !capturedText.contains(tracking) {
+            tracking = ""
         }
         if !best.carrier.isEmpty {
             carrierLine = best.carrier
