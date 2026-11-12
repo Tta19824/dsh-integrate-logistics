@@ -33,23 +33,26 @@ final class WebOrderFetcher: NSObject {
     /// 复用同一个 WebView：省掉每次刷新重建 + 重新握手的时间
     private var reusableWebView: WKWebView?
 
-    /// 在页面里找 innerText 含指定文字的链接，返回它的 href
+    /// 在页面里找 innerText 含指定文字、且**最短**的那个链接，返回它的 href。
+    /// 订单卡片整体常常也被包在一个 <a> 里，取最短才能命中「查看物流」这种小链接。
     static func findLinkJS(text: String) -> String {
         let escaped = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
         return """
         (function(){
           var target = '\(escaped)';
+          var best = '';
+          var bestLen = 999;
           var list = document.querySelectorAll('a');
           for (var i = 0; i < list.length; i++) {
             var t = (list[i].innerText || '').trim();
-            if (t.indexOf(target) >= 0 && list[i].href) { return list[i].href; }
+            if (t.indexOf(target) < 0) continue;
+            if (t.length > 24) continue;
+            var href = list[i].href || '';
+            if (!href) continue;
+            if (href.indexOf('list_bought_items') >= 0) continue;
+            if (t.length < bestLen) { bestLen = t.length; best = href; }
           }
-          var all = document.querySelectorAll('div,span,button');
-          for (var j = 0; j < all.length; j++) {
-            var s = (all[j].innerText || '').trim();
-            if (s === target) { try { all[j].click(); return location.href; } catch (e) {} }
-          }
-          return '';
+          return best;
         })()
         """
     }
@@ -340,7 +343,7 @@ final class WebOrderFetcher: NSObject {
         guard let url = URL(string: "https://buyertrade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=\(encoded)") else {
             throw FetchError.badURL
         }
-        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 14, clickTabs: false, strict: false, followLink: "查看物流详情")
+        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 14, clickTabs: false, strict: false, followLink: "查看物流")
     }
 
     /// 打开淘宝的物流轨迹页（和 App 里「查看物流」同一个页面），把接口响应抓回来。
