@@ -740,6 +740,18 @@ enum TaobaoJdParser {
             .filter { !$0.isEmpty }
 
         let timePattern = #"^(?:(?:今天|昨天|前天|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2})\s+)?\d{1,2}:\d{2}(?::\d{2})?$"#
+        // 运单号几乎总是紧跟在「中通快递 / 韵达快递」这一行后面，优先取它
+        if out.carrier.count >= 2,
+           let ci = lines.firstIndex(where: { $0.contains(out.carrier) }) {
+            for line in lines[ci...].prefix(4) {
+                let v = line.trimmingCharacters(in: .whitespaces)
+                if v.count >= 9, v.count <= 18, v.count != 19, v.allSatisfy({ $0.isNumber }) {
+                    out.tracking = v
+                    break
+                }
+            }
+        }
+
 
         for (index, line) in lines.enumerated() {
             guard line.range(of: timePattern, options: .regularExpression) != nil else { continue }
