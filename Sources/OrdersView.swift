@@ -451,25 +451,12 @@ struct LogisticsSheet: View {
             return
         }
 
-        var best = TaobaoJdParser.TbLogistics()
-
-        // ① 订单详情页的页面文字（上一版靠它，能出轨迹）
+        let best: TaobaoJdParser.TbLogistics
         if let cap = try? await WebOrderFetcher.shared.captureTaobaoDetail(orderNo: order.orderNo, cookieHeader: cookie) {
             try? cap.text.data(using: .utf8)?.write(to: OrderClient.tbDetailFile(for: .tb), options: .atomic)
-            let info = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
-            if info.events.count > best.events.count { best = info }
-        }
-
-        // ② 物流轨迹页的接口数据（更结构化，但页面结构可能变）
-        if let cap = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: order.orderNo, cookieHeader: cookie) {
-            try? cap.payloadJSON.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
-            let info = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
-            if info.events.count > best.events.count {
-                best = info
-            } else {
-                if best.tracking.isEmpty { best.tracking = info.tracking }
-                if best.carrier.isEmpty { best.carrier = info.carrier }
-            }
+            best = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
+        } else {
+            best = TaobaoJdParser.TbLogistics()
         }
 
         events = best.events

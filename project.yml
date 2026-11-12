@@ -23,8 +23,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.abdd.orderpocket
         PRODUCT_NAME: OrderPocket
-        MARKETING_VERSION: 0.17.5
-        CURRENT_PROJECT_VERSION: 81
+        MARKETING_VERSION: 0.17.6
+        CURRENT_PROJECT_VERSION: 82
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: OrderPocket

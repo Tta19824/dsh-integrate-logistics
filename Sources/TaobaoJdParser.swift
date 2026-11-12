@@ -700,7 +700,8 @@ enum TaobaoJdParser {
         var events: [ShipEvent] = []
     }
 
-    /// 从淘宝订单详情页的页面文字里读快递公司、运单号和轨迹。
+    /// 从淘宝「物流详情」页的页面文字里读快递公司、运单号和轨迹。
+    /// 页面结构：阶段词 → 时间（今天 16:23 / 11-12 16:23 / 2026-11-12 16:23）→ 描述。
     static func parseLogistics(text: String) -> TbLogistics {
         var out = TbLogistics()
 
@@ -718,30 +719,84 @@ enum TaobaoJdParser {
                 out.tracking = String(raw[m])
             }
         }
+        if out.tracking.isEmpty,
+           let m = text.range(of: #"\b[A-Za-z]{2,4}\d{10,16}\b"#, options: .regularExpression) {
+            out.tracking = String(text[m])
+        }
 
         let lines = text.split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
 
-        var pending = ""
-        for line in lines {
-            if let r = line.range(of: #"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(:\d{2})?"#, options: .regularExpression) {
-                let ts = String(line[r])
-                let rest = String(line[r.upperBound...]).trimmingCharacters(in: .whitespaces)
-                if rest.count >= 4 {
-                    out.events.append(ShipEvent(id: out.events.count, time: ts, desc: rest))
-                    pending = ""
-                } else {
-                    pending = ts
+        let timePattern = #"^(?:今天|昨天|前天)?\s*(?:\d{1,2}-\d{1,2}\s+)?\d{1,2}:\d{2}(?::\d{2})?$"#
+
+        for (index, line) in lines.enumerated() {
+            guard line.range(of: timePattern, options: .regularExpression) != nil else { continue }
+
+            let trackTime = normalizeTraceTime(line)
+
+            var desc = ""
+            if index + 1 < lines.count {
+                let next = lines[index + 1]
+                if next.range(of: timePattern, options: .regularExpression) == nil,
+                   next.count >= 4, next.count <= 200 {
+                    desc = next
                 }
-                continue
             }
-            guard !pending.isEmpty, line.count >= 4, line.count <= 120 else { continue }
-            if line.contains("运单号") || line.contains("复制") || line.contains("#EFR") { continue }
-            out.events.append(ShipEvent(id: out.events.count, time: pending, desc: line))
-            pending = ""
+
+            var stage = ""
+            if index >= 1 {
+                let prev = lines[index - 1]
+                if prev.range(of: timePattern, options: .regularExpression) == nil,
+                   prev.count <= 12,
+                   prev != "复制",
+                   !prev.contains("电话") {
+                    stage = prev
+                }
+            }
+
+            if desc.isEmpty { desc = stage }
+            guard desc.count >= 4 else { continue }
+            if desc.contains("展开更多") { continue }
+
+            out.events.append(ShipEvent(id: out.events.count, time: trackTime, desc: desc))
         }
 
         return out
     }
+
+    /// 「今天 16:23」「昨天 09:12」「11-12 16:23」「2026-11-12 16:23」统一成「MM-dd HH:mm」
+    private static func normalizeTraceTime(_ raw: String) -> String {
+        let calendar = Calendar.current
+        let now = Date()
+        var day = now
+        var rest = raw.trimmingCharacters(in: .whitespaces)
+
+        if rest.hasPrefix("今天") {
+            rest = String(rest.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+        } else if rest.hasPrefix("昨天") {
+            rest = String(rest.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+            day = calendar.date(byAdding: .day, value: -1, to: now) ?? now
+        } else if rest.hasPrefix("前天") {
+            rest = String(rest.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+            day = calendar.date(byAdding: .day, value: -2, to: now) ?? now
+        }
+
+        if let m = rest.range(of: #"^(\d{4})-(\d{1,2})-(\d{1,2})\s+"#, options: .regularExpression) {
+            let stamp = String(rest[m]).trimmingCharacters(in: .whitespaces)
+            return stamp + String(rest[m.upperBound...])
+        }
+
+        if let m = rest.range(of: #"^(\d{1,2})-(\d{1,2})\s+"#, options: .regularExpression) {
+            let stamp = String(rest[m]).trimmingCharacters(in: .whitespaces)
+            return stamp + " " + String(rest[m.upperBound...])
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "MM-dd"
+        let dayText = formatter.string(from: day)
+        return dayText + " " + rest
+    }
+
 }

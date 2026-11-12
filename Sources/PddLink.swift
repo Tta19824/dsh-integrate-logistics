@@ -26,23 +26,18 @@ enum PddLink {
         s.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? s
     }
 
-    /// 淘宝候选深链，按「最可能打开 App 内订单/商品页」排序；第一个是默认行为。
+    /// 淘宝候选深链。实测「网页同路径」那条能进 App 的订单页，所以放第一位。
     static func tbCandidates(orderNo: String, itemID: String) -> [Route] {
         let sn = enc(orderNo)
         var list: [Route] = []
+        list.append(Route(name: "① 订单详情（实测可用）", url: "taobao://trade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=\(sn)"))
         if !itemID.isEmpty {
             let gid = enc(itemID)
-            list.append(Route(name: "① taobao://item（商品页）", url: "taobao://item.taobao.com/item.htm?id=\(gid)"))
-            list.append(Route(name: "② taobao://detail（商品页）", url: "taobao://detail?itemId=\(gid)"))
-            list.append(Route(name: "③ tbopen://item（商品页）", url: "tbopen://m.taobao.com/item/detail?itemId=\(gid)"))
+            list.append(Route(name: "② 商品页", url: "taobao://item.taobao.com/item.htm?id=\(gid)"))
         }
-        list.append(Route(name: "④ tbopen://trade（订单详情）", url: "tbopen://m.taobao.com/trade/detail?bizOrderId=\(sn)"))
-        list.append(Route(name: "⑤ taobao://trade（订单详情）", url: "taobao://trade/detail?bizOrderId=\(sn)"))
-        list.append(Route(name: "⑥ taobao://m.taobao 详情", url: "taobao://m.taobao.com/trade/detail?bizOrderId=\(sn)"))
-        list.append(Route(name: "⑦ taobao://trade.taobao 网页同路径", url: "taobao://trade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=\(sn)"))
-        list.append(Route(name: "⑧ taobao://awp/mtb/oper（物流/订单）", url: "taobao://h5.m.taobao.com/awp/mtb/oper.htm?orderId=\(sn)"))
-        list.append(Route(name: "⑨ taobao://order（我的订单）", url: "taobao://order/list"))
-        list.append(Route(name: "⑩ 网页版（兜底）", url: "https://buyertrade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=\(sn)"))
+        list.append(Route(name: "③ tbopen 订单详情", url: "tbopen://m.taobao.com/trade/detail?bizOrderId=\(sn)"))
+        list.append(Route(name: "④ 我的订单", url: "taobao://order/list"))
+        list.append(Route(name: "⑤ 网页版（兜底）", url: "https://buyertrade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=\(sn)"))
         return list
     }
 

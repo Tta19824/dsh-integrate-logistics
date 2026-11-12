@@ -33,6 +33,21 @@ final class WebOrderFetcher: NSObject {
     /// 复用同一个 WebView：省掉每次刷新重建 + 重新握手的时间
     private var reusableWebView: WKWebView?
 
+    static var expandTraceJS: String {
+        """
+        (function(){
+          var els = document.querySelectorAll('div,span,a,p,button');
+          for (var i = 0; i < els.length; i++) {
+            var t = (els[i].innerText || '').trim();
+            if (t.indexOf('展开更多物流明细') >= 0 || t === '展开更多') {
+              try { els[i].click(); return '1'; } catch (e) {}
+            }
+          }
+          return '0';
+        })()
+        """
+    }
+
     private var hookScript: String {
         """
         (function(){
@@ -166,7 +181,7 @@ final class WebOrderFetcher: NSObject {
     }
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
-    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true, minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil) async throws -> Capture {
+    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true, minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false) async throws -> Capture {
         let wv = reusableWebView ?? makeWebView()
         webView = wv
         await prefillCookies(cookieHeader)
@@ -202,6 +217,12 @@ final class WebOrderFetcher: NSObject {
                 }
             }
             warmURL = nil
+
+            // 淘宝的物流明细默认只露两条，点一下「展开更多物流明细」把全部拉出来
+            if expand {
+                _ = try? await wv.evaluateJavaScript(Self.expandTraceJS)
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+            }
 
             var title = (try? await wv.evaluateJavaScript("document.title || ''")) as? String ?? ""
             var text = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? ""
@@ -287,7 +308,7 @@ final class WebOrderFetcher: NSObject {
         guard let url = URL(string: "https://buyertrade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=\(encoded)") else {
             throw FetchError.badURL
         }
-        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 18, clickTabs: false, strict: false)
+        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 14, clickTabs: false, strict: false, expand: true)
     }
 
     /// 打开淘宝的物流轨迹页（和 App 里「查看物流」同一个页面），把接口响应抓回来。
