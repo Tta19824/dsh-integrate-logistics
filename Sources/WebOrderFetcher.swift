@@ -59,13 +59,14 @@ final class WebOrderFetcher: NSObject {
         """
     }
 
+    /// 默认只展示最新两条，点「展开更多物流明细」把剩下的拉出来（只点非链接元素，避免整页跳走）
     static var expandTraceJS: String {
         """
         (function(){
-          var els = document.querySelectorAll('div,span,a,p,button');
+          var els = document.querySelectorAll('div,span,p,button');
           for (var i = 0; i < els.length; i++) {
             var t = (els[i].innerText || '').trim();
-            if (t.indexOf('展开更多物流明细') >= 0 || t === '展开更多') {
+            if (t === '展开更多物流明细' || t === '展开更多') {
               try { els[i].click(); return '1'; } catch (e) {}
             }
           }
@@ -258,8 +259,15 @@ final class WebOrderFetcher: NSObject {
                    href.hasPrefix("http"), let next = URL(string: href) {
                     followed = href
                     _ = try? await wv.load(URLRequest(url: next))
-                    _ = await waitForData(wv: wv, seconds: max(8, seconds * 0.8), strict: strict)
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    // 物流页内容多，但不用死等：一出现「快件/已签收/派送」就直接往下走
+                    for _ in 0..<24 {
+                        try? await Task.sleep(nanoseconds: 400_000_000)
+                        let probe = (try? await wv.evaluateJavaScript("document.body ? document.body.innerText.length : 0")) as? Int ?? 0
+                        if probe > 1500 { break }
+                    }
+                    // 默认只露最新两条，剩下的要点「展开更多物流明细」
+                    _ = try? await wv.evaluateJavaScript(Self.expandTraceJS)
+                    try? await Task.sleep(nanoseconds: 800_000_000)
                 }
             }
 

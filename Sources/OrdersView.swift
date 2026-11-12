@@ -445,6 +445,14 @@ struct LogisticsSheet: View {
 
     /// 淘宝：详情页文字 + 物流轨迹页接口，两份都试，取轨迹更全的那份。
     private func loadTaobao() async {
+        let cacheKey = "tb:\(order.orderNo)"
+        if let cached = TraceCache.shared.get(cacheKey) {
+            events = cached.events
+            tracking = cached.tracking
+            carrierLine = cached.carrier.isEmpty ? order.carrier : cached.carrier
+            loading = false
+            return
+        }
         guard let cookie = await CookieStore.currentHeader(for: .tb), !cookie.isEmpty else {
             message = "还没登录淘宝，先去「平台」页登录"
             loading = false
@@ -490,6 +498,9 @@ struct LogisticsSheet: View {
             carrierLine = best.carrier
         } else if !order.carrier.isEmpty {
             carrierLine = order.carrier
+        }
+        if !events.isEmpty {
+            TraceCache.shared.put(cacheKey, TraceCache.Item(at: Date(), events: events, tracking: tracking, carrier: carrierLine))
         }
 
         if events.isEmpty {

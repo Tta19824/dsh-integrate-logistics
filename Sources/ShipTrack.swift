@@ -410,3 +410,26 @@ struct RouteMapView: UIViewRepresentable {
         }
     }
 }
+
+
+/// 同一单 15 分钟内复用轨迹，避免每次点开都重新开页面（淘宝物流页要十几秒）
+@MainActor
+final class TraceCache {
+    static let shared = TraceCache()
+    struct Item {
+        let at: Date
+        let events: [ShipEvent]
+        let tracking: String
+        let carrier: String
+    }
+    private var map: [String: Item] = [:]
+
+    func get(_ key: String) -> Item? {
+        guard let item = map[key], Date().timeIntervalSince(item.at) < 900 else { return nil }
+        return item
+    }
+
+    func put(_ key: String, _ item: Item) {
+        map[key] = item
+    }
+}
