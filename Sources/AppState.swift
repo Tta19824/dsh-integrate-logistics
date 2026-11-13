@@ -96,12 +96,12 @@ final class AppState: ObservableObject {
                 let events = TaobaoJdParser.parseTaobaoTraceHTML(cap.html)
                 guard let latest = events.first, !latest.desc.isEmpty else { continue }
                 TraceCache.shared.put("tb:\(no)", TraceCache.Item(at: Date(), events: events, tracking: "", carrier: ""))
+                // 卡片上只放描述，时间留给详情页；带时间前缀会被截断反而看不清
+                OrderStore.shared.setTrace(orderNo: no, text: latest.desc)
                 guard let self else { return }
-                guard let idx = self.orders.firstIndex(where: { $0.platform == .tb && $0.orderNo == no }) else { continue }
-                var updated = self.orders[idx]
-                updated.logistics = latest.time.isEmpty ? latest.desc : "\(latest.time) \(latest.desc)"
-                self.orders[idx] = updated
-                OrderStore.shared.upsert([updated])
+                if let idx = self.orders.firstIndex(where: { $0.platform == .tb && $0.orderNo == no }) {
+                    self.orders[idx].logistics = latest.desc
+                }
             }
         }
     }

@@ -46,6 +46,7 @@ final class OrderStore {
         sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN image_url TEXT;", nil, nil, nil)
         sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN goods_id TEXT;", nil, nil, nil)
         sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN carrier TEXT;", nil, nil, nil)
+        sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS trace_summary (order_no TEXT PRIMARY KEY, text TEXT, updated REAL);", nil, nil, nil)
         if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
             NSLog("[store] create table failed: \(String(cString: sqlite3_errmsg(db)))")
         }
@@ -59,6 +60,22 @@ final class OrderStore {
             sqlite3_exec(db, "DELETE FROM orders WHERE platform = '\(platform.rawValue)';", nil, nil, nil)
         }
         upsert(orders)
+    }
+
+    /// 卡片上显示的最新一条轨迹。单独存表：刷新会整平台 DELETE 再写回，
+    /// 直接写在 orders.logistics 上会被列表接口的一句话摘要冲掉。
+    func setTrace(orderNo: String, text value: String) {
+        queue.sync {
+            guard let db else { return }
+            let sql = "INSERT INTO trace_summary (order_no, text, updated) VALUES (?, ?, ?) ON CONFLICT(order_no) DO UPDATE SET text = excluded.text, updated = excluded.updated;"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            sqlite3_bind_text(stmt, 1, orderNo, -1, nil)
+            sqlite3_bind_text(stmt, 2, value, -1, nil)
+            sqlite3_bind_double(stmt, 3, Date().timeIntervalSince1970)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        }
     }
 
     func upsert(_ orders: [Order]) {
@@ -127,6 +144,14 @@ final class OrderStore {
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
             var result: [Order] = []
+            var traces: [String: String] = [:]
+            var tstmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "SELECT order_no, text FROM trace_summary;", -1, &tstmt, nil) == SQLITE_OK {
+                while sqlite3_step(tstmt) == SQLITE_ROW {
+                    traces[text(tstmt, 0)] = text(tstmt, 1)
+                }
+            }
+            sqlite3_finalize(tstmt)
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let id = text(stmt, 0)
                 let platformRaw = text(stmt, 1)
@@ -151,6 +176,11 @@ final class OrderStore {
                 )
             }
             sqlite3_finalize(stmt)
+            if !traces.isEmpty {
+                for i in result.indices {
+                    if let t = traces[result[i].orderNo], !t.isEmpty { result[i].logistics = t }
+                }
+            }
             return result
         }
     }

@@ -62,7 +62,10 @@ enum PinduoduoParser {
     static func parse(text: String, payloadJSON: String, now: Date = Date()) -> [Order] {
         let fromJSON = parsePayload(payloadJSON, now: now)
         if !fromJSON.isEmpty { return fromJSON }
-        return parseText(text, now: now)
+        // 页面没渲染完时（风控/首屏未完成），文字兜底会把「百亿补贴·智云」这类品牌块当成一条订单，
+        // 造成卡片没有图、没有价格、没有物流的假记录。宁可这次不返回。
+        let fromText = parseText(text, now: now)
+        return fromText.count >= 3 ? fromText : []
     }
 
     static func parse(html: String, now: Date = Date()) -> [Order] {

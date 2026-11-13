@@ -855,7 +855,11 @@ enum TaobaoJdParser {
             if (zh == "今天" || zh == "昨天" || zh == "前天"), h.count >= 2 {
                 let offset = zh == "今天" ? 0 : (zh == "昨天" ? -1 : -2)
                 if let day = calendar.date(byAdding: .day, value: offset, to: Date()) {
-                    return fmt.string(from: day) + " \(two(h[0])):\(two(h[1]))"
+                    // 只要日期，时间用原文里的；fmt 带着当前时分，不能整串用
+                    let dateOnly = DateFormatter()
+                    dateOnly.locale = Locale(identifier: "zh_CN")
+                    dateOnly.dateFormat = "MM-dd"
+                    return dateOnly.string(from: day) + " \(two(h[0])):\(two(h[1]))"
                 }
             }
         }
