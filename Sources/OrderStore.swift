@@ -60,6 +60,15 @@ final class OrderStore {
             sqlite3_exec(db, "DELETE FROM orders WHERE platform = '\(platform.rawValue)';", nil, nil, nil)
         }
         upsert(orders)
+        // 列表接口只给「运输中预计明天送达」这种摘要，写回后又把卡片上的轨迹冲掉了。
+        // 这里在 SQL 层把 trace_summary 里的最新轨迹贴回去，跟缓存/内存状态无关。
+        queue.sync {
+            guard let db else { return }
+            sqlite3_exec(db, """
+                UPDATE orders SET logistics = (SELECT text FROM trace_summary t WHERE t.order_no = orders.order_no)
+                WHERE EXISTS (SELECT 1 FROM trace_summary t WHERE t.order_no = orders.order_no);
+                """, nil, nil, nil)
+        }
     }
 
     /// 卡片上显示的最新一条轨迹。单独存表：刷新会整平台 DELETE 再写回，

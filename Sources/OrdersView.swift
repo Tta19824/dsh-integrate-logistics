@@ -467,6 +467,8 @@ struct LogisticsSheet: View {
             tracking = cached.tracking
             carrierLine = cached.carrier.isEmpty ? order.carrier : cached.carrier
             loading = false
+            // 缓存只存了轨迹，路线要重新算，否则第二次进来地图是空的
+            await refreshRoute()
             return
         }
         guard let cookie = await CookieStore.currentHeader(for: .tb), !cookie.isEmpty else {
@@ -574,15 +576,22 @@ struct LogisticsSheet: View {
 
         let cost = Date().timeIntervalSince(openedAt)
         costLabel = String(format: "%.1f 秒", cost)
-        let names = ShipTracking.placeNames(in: events)
-        if !names.isEmpty {
-            coordinates = await ShipTracking.coordinates(for: names)
-        }
-        if !coordinates.isEmpty {
-            loading = false
-            path = await RoutePlanner.path(through: coordinates)
-        }
+        await refreshRoute()
         loading = false
+    }
+
+    /// 由轨迹里的地名算坐标、再求沿公路的折线。缓存命中时也要跑一遍，否则地图空白。
+    private func refreshRoute(target: String = "") async {
+        let names = ShipTracking.placeNames(in: events)
+        guard !names.isEmpty else { return }
+        coordinates = await ShipTracking.coordinates(for: names)
+        guard !coordinates.isEmpty else { return }
+        path = await RoutePlanner.path(through: coordinates)
+        if !target.isEmpty,
+           let dest = await ShipTracking.coordinates(for: [target]).first,
+           let last = coordinates.last {
+            remaining = await RoutePlanner.path(through: [last, dest])
+        }
     }
 
     private func load() async {
@@ -623,19 +632,7 @@ struct LogisticsSheet: View {
             return
         }
 
-        let names = ShipTracking.placeNames(in: events)
-        if !names.isEmpty {
-            coordinates = await ShipTracking.coordinates(for: names)
-        }
-        if !coordinates.isEmpty {
-            loading = false
-            path = await RoutePlanner.path(through: coordinates)
-
-            if !address.isEmpty,
-               let target = await ShipTracking.coordinates(for: [address]).first {
-                remaining = await RoutePlanner.path(through: [coordinates.last!, target])
-            }
-        }
+        await refreshRoute(target: address)
         loading = false
     }
 }
