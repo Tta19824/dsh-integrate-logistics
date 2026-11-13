@@ -111,3 +111,30 @@ enum ShippingClient {
         )
     }
 }
+
+
+/// 淘宝的物流详情页是服务端渲染的：一次 GET 回来的 HTML 里就带着完整轨迹节点，
+/// 不需要开 WebView、不需要执行 JS。抓不到（比如要求登录）再回退到 WebView。
+enum TaobaoLogistics {
+    static func traceHTML(orderNo: String, cookieHeader: String) async -> String? {
+        let encoded = orderNo.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? orderNo
+        let raw = "https://market.m.taobao.com/app/dinamic/pc-trade-logistics/home.html?orderId=\(encoded)&entrance=pc"
+        guard let url = URL(string: raw) else { return nil }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm", forHTTPHeaderField: "Referer")
+        request.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
+
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+        let html = String(decoding: data, as: UTF8.self)
+        if TaobaoJdParser.parseTaobaoTraceHTML(html).count >= 2 { return html }
+        return nil
+    }
+}

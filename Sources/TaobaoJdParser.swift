@@ -653,6 +653,44 @@ enum TaobaoJdParser {
     }
 
     /// 淘宝物流轨迹：优先读轨迹页的接口数据（字段最全），读不到再退回详情页文字。
+    /// 从物流详情页的 HTML 里直接抽轨迹：页面把每条记录渲染成
+    /// <span class="rax-text-v2 title">阶段</span><span class="rax-text-v2 subtitle">时间</span>
+    /// <div class="rax-view-v2 flexRow desc">描述</div>
+    static func parseTaobaoTraceHTML(_ html: String) -> [ShipEvent] {
+        guard !html.isEmpty else { return [] }
+        let pattern = "class=\"rax-text-v2 title\">([^<]*)<\\/span>|class=\"rax-text-v2 subtitle\">([^<]*)<\\/span>|flexRow desc\">([\\s\\S]*?)<\\/div>"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return [] }
+        let ns = html as NSString
+        let matches = regex.matches(in: html, options: [], range: NSRange(location: 0, length: ns.length))
+
+        var events: [ShipEvent] = []
+        var stage = ""
+        var time = ""
+        for m in matches {
+            let a = m.range(at: 1).location != NSNotFound ? ns.substring(with: m.range(at: 1)) : ""
+            let b = m.range(at: 2).location != NSNotFound ? ns.substring(with: m.range(at: 2)) : ""
+            let c = m.range(at: 3).location != NSNotFound ? ns.substring(with: m.range(at: 3)) : ""
+            if !a.isEmpty { stage = a.trimmingCharacters(in: .whitespacesAndNewlines); continue }
+            if !b.isEmpty { time = b.trimmingCharacters(in: .whitespacesAndNewlines); continue }
+            let desc = stripHTML(c)
+            guard !desc.isEmpty else { continue }
+            var line = desc
+            if !stage.isEmpty, !desc.hasPrefix(stage) { line = stage + " " + desc }
+            events.append(ShipEvent(id: events.count, time: normalizeTraceTime(time), desc: line))
+            stage = ""
+            time = ""
+        }
+        return events
+    }
+
+    /// 去掉 HTML 标签与常见实体
+    static func stripHTML(_ raw: String) -> String {
+        var out = raw.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        out = out.replacingOccurrences(of: "&nbsp;", with: " ")
+        out = out.replacingOccurrences(of: "&amp;", with: "&")
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func parseTaobaoLogistics(payloadJSON: String, text: String) -> TbLogistics {
         var out = TbLogistics()
 

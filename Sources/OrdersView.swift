@@ -467,9 +467,28 @@ struct LogisticsSheet: View {
         var logisticsLanding = ""
         var best = TaobaoJdParser.TbLogistics()
 
-        // 先直接开物流轨迹页：它的 mtop 响应走 JSONP，钩子能抓到全量轨迹，比解析页面文字靠谱
-        if let capL = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: order.orderNo, cookieHeader: cookie) {
-            let whole = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: capL.payloadJSON, text: capL.text)
+        // 快路径：物流页服务端就把轨迹渲染进 HTML 了，直接 GET 一次即可（不用开 WebView）
+        if let html = await TaobaoLogistics.traceHTML(orderNo: order.orderNo, cookieHeader: cookie) {
+            let fast = TaobaoJdParser.parseTaobaoTraceHTML(html)
+            if fast.count > 1 {
+                best.events = fast
+                best.tracking = order.trackingNumber
+                best.carrier = order.carrier
+                capturedText = html
+                capturedChars = html.count
+            }
+        }
+
+        // 慢路径：直接开物流轨迹页：它的 mtop 响应走 JSONP，钩子能抓到全量轨迹，比解析页面文字靠谱
+        if best.events.count < 3,
+           let capL = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: order.orderNo, cookieHeader: cookie) {
+            var whole = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: capL.payloadJSON, text: capL.text)
+            let fromHTML = TaobaoJdParser.parseTaobaoTraceHTML(capL.html)
+            if fromHTML.count > whole.events.count {
+                whole.events = fromHTML
+                if whole.tracking.isEmpty { whole.tracking = order.trackingNumber }
+                if whole.carrier.isEmpty { whole.carrier = order.carrier }
+            }
             if whole.events.count > 1 {
                 best = whole
                 capturedText = capL.text
