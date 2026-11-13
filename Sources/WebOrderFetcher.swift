@@ -26,6 +26,8 @@ final class WebOrderFetcher: NSObject {
         var digest: String = "[]"
         /// 跟进的链接（「查看物流」点进去的那个地址），没跟进就是空
         var followedURL: String = ""
+        /// 页面这次加载过的所有资源地址（performance timing），用来定位真正的接口
+        var resources: String = "[]"
     }
 
     private var webView: WKWebView?
@@ -75,6 +77,20 @@ final class WebOrderFetcher: NSObject {
           if (document.scrollingElement) { document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight; }
           window.scrollTo(0, document.body.scrollHeight);
           return String(document.body ? (document.body.innerText || '').length : 0);
+        })()
+        """
+    }
+
+    /// 这个页面加载过的所有资源地址：接口、脚本、图片都在这，用来反查真正的数据接口
+    static var resourcesJS: String {
+        """
+        (function(){
+          try {
+            var out = [];
+            var es = performance.getEntriesByType('resource') || [];
+            for (var i = 0; i < es.length; i++) { out.push(es[i].name); }
+            return JSON.stringify(out);
+          } catch (e) { return '[]'; }
         })()
         """
     }
@@ -376,6 +392,7 @@ final class WebOrderFetcher: NSObject {
             var html = (try? await wv.evaluateJavaScript("document.documentElement ? document.documentElement.outerHTML : ''")) as? String ?? ""
             if html.count > 1_500_000 { html = String(html.prefix(1_500_000)) }
             let digest = (try? await wv.evaluateJavaScript(Self.digestJS)) as? String ?? "[]"
+            let resources = (try? await wv.evaluateJavaScript(Self.resourcesJS)) as? String ?? "[]"
             let made = Capture(
                 finalURL: wv.url?.absoluteString ?? url.absoluteString,
                 title: title,
@@ -387,7 +404,8 @@ final class WebOrderFetcher: NSObject {
                 cardsJSON: cards,
                 html: html,
                 digest: digest,
-                followedURL: followed
+                followedURL: followed,
+                resources: resources
             )
             if stopOnEntries && Self.payloadEntryCount(payload) == 0 {
                 // 这个地址没抓到接口响应，继续试下一个地址

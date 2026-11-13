@@ -84,6 +84,11 @@ enum OrderClient {
         rawDirectory().appendingPathComponent("tb_logistics_\(platform.rawValue).json")
     }
 
+    /// 页面这次加载过的所有资源地址（找出真正的数据接口）
+    static func resourcesFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("resources_\(platform.rawValue).json")
+    }
+
     /// 淘宝订单详情页的页面文字（排查快递公司与轨迹用）
     static func tbDetailFile(for platform: Platform) -> URL {
         rawDirectory().appendingPathComponent("tb_detail_\(platform.rawValue).txt")
@@ -483,7 +488,8 @@ enum OrderClient {
             DebugFile(id: "html-\(platform.rawValue)", label: "\(platform.name) · 网页源码", url: htmlFile(for: platform)),
             DebugFile(id: "tblogi-\(platform.rawValue)", label: "\(platform.name) · 物流接口", url: tbLogisticsFile(for: platform)),
             DebugFile(id: "digest-\(platform.rawValue)", label: "\(platform.name) · 图片时间", url: digestFile(for: platform)),
-            DebugFile(id: "tbdetail-\(platform.rawValue)", label: "\(platform.name) · 订单详情页", url: tbDetailFile(for: platform))
+            DebugFile(id: "tbdetail-\(platform.rawValue)", label: "\(platform.name) · 订单详情页", url: tbDetailFile(for: platform)),
+            DebugFile(id: "resources-\(platform.rawValue)", label: "\(platform.name) · 资源地址", url: resourcesFile(for: platform))
         ]
     }
 }

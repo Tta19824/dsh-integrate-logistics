@@ -476,6 +476,7 @@ struct LogisticsSheet: View {
                 landedURL = capL.finalURL
             }
             try? capL.payloadJSON.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
+            try? capL.resources.data(using: .utf8)?.write(to: OrderClient.resourcesFile(for: .tb), options: .atomic)
         }
 
         if best.events.count < 3,
