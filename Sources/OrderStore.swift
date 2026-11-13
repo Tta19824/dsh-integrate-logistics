@@ -84,6 +84,14 @@ final class OrderStore {
             sqlite3_bind_double(stmt, 3, Date().timeIntervalSince1970)
             sqlite3_step(stmt)
             sqlite3_finalize(stmt)
+            // 顺手把订单行本身也改掉：重启后即使 overlay 没生效，卡片也是对的
+            var ustmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "UPDATE orders SET logistics = ? WHERE order_no = ?;", -1, &ustmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(ustmt, 1, value, -1, nil)
+                sqlite3_bind_text(ustmt, 2, orderNo, -1, nil)
+                sqlite3_step(ustmt)
+            }
+            sqlite3_finalize(ustmt)
         }
     }
 

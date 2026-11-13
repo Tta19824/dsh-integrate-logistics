@@ -656,6 +656,19 @@ enum TaobaoJdParser {
     /// 从物流详情页的 HTML 里直接抽轨迹：页面把每条记录渲染成
     /// <span class="rax-text-v2 title">阶段</span><span class="rax-text-v2 subtitle">时间</span>
     /// <div class="rax-view-v2 flexRow desc">描述</div>
+    /// 物流页 HTML 里的运单号：10–16 位（淘宝订单号是 19 位，排除）
+    static func trackingNumber(fromLogisticsHTML html: String) -> String {
+        guard !html.isEmpty else { return "" }
+        let pattern = #"\b\d{10,16}\b"#
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return "" }
+        let ns = html as NSString
+        for m in re.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            let v = ns.substring(with: m.range)
+            if v.count != 19 { return v }
+        }
+        return ""
+    }
+
     static func parseTaobaoTraceHTML(_ html: String) -> [ShipEvent] {
         guard !html.isEmpty else { return [] }
         let pattern = "class=\"rax-text-v2 title\">([^<]*)<\\/span>|class=\"rax-text-v2 subtitle\">([^<]*)<\\/span>|flexRow desc\">([\\s\\S]*?)<\\/div>"

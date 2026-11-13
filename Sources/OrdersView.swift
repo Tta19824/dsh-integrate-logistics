@@ -428,7 +428,7 @@ struct LogisticsSheet: View {
 
     private var trackingRow: some View {
         HStack(spacing: 8) {
-            Text(carrierLine.isEmpty ? "快递单号" : carrierLine)
+            Text("快递单号")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(tracking.isEmpty ? "暂未获取" : tracking)
@@ -436,6 +436,14 @@ struct LogisticsSheet: View {
                 .foregroundStyle(tracking.isEmpty ? .secondary : .primary)
                 .textSelection(.enabled)
             Spacer(minLength: 8)
+            if !carrierLine.isEmpty {
+                Text(carrierLine)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color(.tertiarySystemFill), in: Capsule())
+            }
             if !costLabel.isEmpty {
                 Text(costLabel)
                     .font(.caption2.monospacedDigit())
@@ -494,6 +502,9 @@ struct LogisticsSheet: View {
             if fromHTML.count > whole.events.count {
                 whole.events = fromHTML
                 if whole.carrier.isEmpty { whole.carrier = order.carrier }
+            }
+            if whole.tracking.isEmpty {
+                whole.tracking = TaobaoJdParser.trackingNumber(fromLogisticsHTML: capL.html)
             }
             if whole.events.count > 1 {
                 best = whole

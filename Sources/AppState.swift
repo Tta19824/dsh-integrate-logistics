@@ -95,7 +95,10 @@ final class AppState: ObservableObject {
                 guard let cap = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: no, cookieHeader: cookie) else { continue }
                 let events = TaobaoJdParser.parseTaobaoTraceHTML(cap.html)
                 guard let latest = events.first, !latest.desc.isEmpty else { continue }
-                TraceCache.shared.put("tb:\(no)", TraceCache.Item(at: Date(), events: events, tracking: "", carrier: ""))
+                // 单号和快递公司也存进缓存，否则缓存命中时详情页上是空的
+                let no2 = TaobaoJdParser.trackingNumber(fromLogisticsHTML: cap.html)
+                let carrier = orders.first(where: { $0.orderNo == no })?.carrier ?? ""
+                TraceCache.shared.put("tb:\(no)", TraceCache.Item(at: Date(), events: events, tracking: no2, carrier: carrier))
                 // 卡片上只放描述，时间留给详情页；带时间前缀会被截断反而看不清
                 OrderStore.shared.setTrace(orderNo: no, text: latest.desc)
                 guard let self else { return }
