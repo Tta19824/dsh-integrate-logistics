@@ -427,6 +427,11 @@ struct LogisticsSheet: View {
                 .foregroundStyle(tracking.isEmpty ? .secondary : .primary)
                 .textSelection(.enabled)
             Spacer(minLength: 8)
+            if !costLabel.isEmpty {
+                Text(costLabel)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
             if !tracking.isEmpty {
                 Button {
                     UIPasteboard.general.string = tracking
@@ -444,6 +449,8 @@ struct LogisticsSheet: View {
     }
 
     /// 淘宝：详情页文字 + 物流轨迹页接口，两份都试，取轨迹更全的那份。
+    @State private var costLabel = ""
+
     private func loadTaobao() async {
         let cacheKey = "tb:\(order.orderNo)"
         if let cached = TraceCache.shared.get(cacheKey) {
@@ -465,19 +472,8 @@ struct LogisticsSheet: View {
         var loggedSecond = ""
         var followedURL = ""
         var logisticsLanding = ""
+        let openedAt = Date()
         var best = TaobaoJdParser.TbLogistics()
-
-        // 快路径：物流页服务端就把轨迹渲染进 HTML 了，直接 GET 一次即可（不用开 WebView）
-        if let html = await TaobaoLogistics.traceHTML(orderNo: order.orderNo, cookieHeader: cookie) {
-            let fast = TaobaoJdParser.parseTaobaoTraceHTML(html)
-            if fast.count > 1 {
-                best.events = fast
-                best.tracking = ""
-                best.carrier = order.carrier
-                capturedText = html
-                capturedChars = html.count
-            }
-        }
 
         // 慢路径：直接开物流轨迹页：它的 mtop 响应走 JSONP，钩子能抓到全量轨迹，比解析页面文字靠谱
         if best.events.count < 3,
@@ -567,6 +563,8 @@ struct LogisticsSheet: View {
             return
         }
 
+        let cost = Date().timeIntervalSince(openedAt)
+        costLabel = String(format: "%.1f 秒", cost)
         let names = ShipTracking.placeNames(in: events)
         if !names.isEmpty {
             coordinates = await ShipTracking.coordinates(for: names)

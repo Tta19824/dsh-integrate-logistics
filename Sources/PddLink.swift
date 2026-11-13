@@ -53,7 +53,7 @@ enum PddLink {
 
     static func orderDetailURL(orderNo: String) -> URL? {
         let sn = enc(orderNo)
-        return URL(string: "pinduoduo://com.xunmeng.pinduoduo/order.html?order_sn=(sn)")
+        return URL(string: "pinduoduo://com.xunmeng.pinduoduo/order.html?order_sn=\(sn)")
     }
 
     static func openDefault(orderNo: String) {

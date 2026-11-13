@@ -289,7 +289,7 @@ final class WebOrderFetcher: NSObject {
     }
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
-    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true, minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil) async throws -> Capture {
+    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true, minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil, readyJS: String? = nil) async throws -> Capture {
         let wv = reusableWebView ?? makeWebView()
         webView = wv
         await prefillCookies(cookieHeader)
@@ -312,7 +312,18 @@ final class WebOrderFetcher: NSObject {
                 loaded = true
             } else {
                 _ = try? await wv.load(request)
-                loaded = await waitForData(wv: wv, seconds: seconds, strict: strict)
+                if let readyJS {
+                    // 没有可等的接口响应、但渲染完就能判断"到齐了"的页面（淘宝物流页）：
+                    // 每 300ms 问一次，条件成立立刻往下走，不用干等到超时。
+                    loaded = false
+                    for _ in 0..<70 {
+                        let flag = (try? await wv.evaluateJavaScript(readyJS)) as? String ?? "0"
+                        if flag == "1" { loaded = true; break }
+                        try? await Task.sleep(nanoseconds: 300_000_000)
+                    }
+                } else {
+                    loaded = await waitForData(wv: wv, seconds: seconds, strict: strict)
+                }
                 if scroll {
                     for _ in 0..<3 {
                         _ = try? await wv.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight)")
@@ -463,7 +474,16 @@ final class WebOrderFetcher: NSObject {
         guard let url = URL(string: "https://market.m.taobao.com/app/dinamic/pc-trade-logistics/home.html?orderId=\(encoded)&entrance=pc") else {
             throw FetchError.badURL
         }
-        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 16, clickTabs: false, strict: true, scroll: true)
+        return try await capture(
+            platform: .tb,
+            urls: [url],
+            cookieHeader: cookieHeader,
+            seconds: 20,
+            clickTabs: false,
+            strict: false,
+            scroll: true,
+            readyJS: "(document.querySelectorAll('.pc-node-wrapper').length >= 3) ? '1' : '0'"
+        )
     }
 
     /// 打开商品详情页，用来捞真实店铺名（订单接口里的店铺是品牌馆名）。
