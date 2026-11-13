@@ -465,14 +465,35 @@ struct LogisticsSheet: View {
         var loggedSecond = ""
         var followedURL = ""
         var best = TaobaoJdParser.TbLogistics()
-        if let cap = try? await WebOrderFetcher.shared.captureTaobaoDetail(orderNo: order.orderNo, cookieHeader: cookie) {
+
+        // 先直接开物流轨迹页：它的 mtop 响应走 JSONP，钩子能抓到全量轨迹，比解析页面文字靠谱
+        if let capL = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: order.orderNo, cookieHeader: cookie) {
+            let whole = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: capL.payloadJSON, text: capL.text)
+            if whole.events.count > 1 {
+                best = whole
+                capturedText = capL.text
+                capturedChars = capL.text.count
+                landedURL = capL.finalURL
+            }
+            try? capL.payloadJSON.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
+        }
+
+        if best.events.count < 3,
+           let cap = try? await WebOrderFetcher.shared.captureTaobaoDetail(orderNo: order.orderNo, cookieHeader: cookie) {
             capturedChars = cap.text.count
             capturedText = cap.text
             landedURL = cap.finalURL
             followedURL = cap.followedURL
             try? cap.text.data(using: .utf8)?.write(to: OrderClient.tbDetailFile(for: .tb), options: .atomic)
             try? cap.payloadJSON.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
-            best = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
+            let one = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
+            if one.events.count > best.events.count {
+                best = one
+                capturedText = cap.text
+                capturedChars = cap.text.count
+                landedURL = cap.finalURL
+                followedURL = cap.followedURL
+            }
         }
 
         // 轨迹太少就先开 wuliu PC 页（服务端渲染，通常一次给全），再不行才开 mobile 物流页

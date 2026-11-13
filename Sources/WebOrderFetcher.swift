@@ -124,6 +124,44 @@ final class WebOrderFetcher: NSObject {
               });
             };
           }
+
+          // 淘宝的 mtop 接口走 JSONP（<script src=...callback=mtopjsonp1>），fetch/XHR 钩子抓不到；
+          // 所以在 script 插入 DOM 之前，先把它的回调名注册到 window 上，数据一到就存下来。
+          var seen = {};
+          function hookScript(node) {
+            try {
+              var src = node && node.src ? String(node.src) : (node && node.__dshSrc) || '';
+              if (!src) return;
+              var m = /[?&](?:callback|cb)=([^&]+)/.exec(src);
+              if (!m) return;
+              var name = decodeURIComponent(m[1]);
+              if (!name || seen[name]) return;
+              seen[name] = true;
+              window[name] = function(d) { try { push(src, JSON.stringify(d)); } catch (e) {} return d; };
+            } catch (e) {}
+          }
+          var ap = Node.prototype.appendChild;
+          Node.prototype.appendChild = function(n) {
+            try { if (n && n.tagName === 'SCRIPT') hookScript(n); } catch (e) {}
+            return ap.apply(this, arguments);
+          };
+          try {
+            var d = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
+            if (d && d.set) {
+              Object.defineProperty(HTMLScriptElement.prototype, 'src', {
+                configurable: true,
+                get: function() { return d.get.call(this); },
+                set: function(v) {
+                  try {
+                    this.__dshSrc = v;
+                    if (this.tagName === 'SCRIPT' && this.isConnected === false) hookScript(this);
+                  } catch (e) {}
+                  d.set.call(this, v);
+                }
+              });
+            }
+          } catch (e) {}
+
           var oo = XMLHttpRequest.prototype.open;
           var os = XMLHttpRequest.prototype.send;
           XMLHttpRequest.prototype.open = function(m, u) { this.__dshUrl = u; return oo.apply(this, arguments); };
