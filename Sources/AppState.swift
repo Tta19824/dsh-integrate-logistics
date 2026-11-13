@@ -80,6 +80,32 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// 淘宝列表接口只给一句摘要（"运输中预计明天送达"），卡片上想要拼多多那种最新轨迹。
+    /// 列表出来之后在后台补抓最近几单的物流页，抓到就把最新一条写回库并刷新界面，不拖慢列表。
+    private func enrichTaobaoTrace(limit: Int = 2) {
+        guard let cookie = CookieStore.load(for: .tb) else { return }
+        let targets = orders
+            .filter { $0.platform == .tb && $0.status == .shipped }
+            .filter { TraceCache.shared.get("tb:\($0.orderNo)") == nil }
+            .prefix(limit)
+            .map { $0.orderNo }
+        guard !targets.isEmpty else { return }
+        Task { [weak self] in
+            for no in targets {
+                guard let cap = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: no, cookieHeader: cookie) else { continue }
+                let events = TaobaoJdParser.parseTaobaoTraceHTML(cap.html)
+                guard let latest = events.first, !latest.desc.isEmpty else { continue }
+                TraceCache.shared.put("tb:\(no)", TraceCache.Item(at: Date(), events: events, tracking: "", carrier: ""))
+                guard let self else { return }
+                guard let idx = self.orders.firstIndex(where: { $0.platform == .tb && $0.orderNo == no }) else { continue }
+                var updated = self.orders[idx]
+                updated.logistics = latest.time.isEmpty ? latest.desc : "\(latest.time) \(latest.desc)"
+                self.orders[idx] = updated
+                OrderStore.shared.upsert([updated])
+            }
+        }
+    }
+
     func refreshAll() {
         // 京东先断开：抓取路径还没跑通，留着会让每次刷新多花几十秒
         let platforms = Platform.allCases.filter { $0 != .jd && isLoggedIn($0) }
@@ -105,6 +131,7 @@ final class AppState: ObservableObject {
             reload()
             busy = nil
             show(lines.joined(separator: "；"))
+            enrichTaobaoTrace()
         }
     }
 }

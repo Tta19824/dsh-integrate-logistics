@@ -162,16 +162,15 @@ struct OrderRow: View {
             }
             .frame(height: rowHeight)
 
-            if !order.logistics.isEmpty {
-                Button { onLogisticsTap() } label: {
+            Button { onLogisticsTap() } label: {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "truck.box")
                             .font(.system(size: 13))
                             .foregroundStyle(statusColor)
                             .frame(width: 22, height: 18)
-                        Text(order.logistics)
+                        Text(order.logistics.isEmpty ? placeholderLogisticsText : order.logistics)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(order.logistics.isEmpty ? Color.secondary.opacity(0.7) : .secondary)
                             .lineLimit(2)
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
@@ -182,10 +181,20 @@ struct OrderRow: View {
                     .padding(.vertical, 7)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
-                .buttonStyle(.plain)
-            }
+            .buttonStyle(.plain)
         }
         .padding(.vertical, 6)
+    }
+
+    /// 没有物流时卡片也要占位说明，别整块消失
+    private var placeholderLogisticsText: String {
+        switch order.status {
+        case .paid: return "卖家还没发货，发货后会显示物流"
+        case .shipped: return "物流信息还没更新，稍后再看"
+        case .completed: return "这单已完成，没有物流轨迹"
+        case .cancelled: return "订单已取消"
+        default: return "暂无物流信息"
+        }
     }
 
     private var thumbnail: some View {
