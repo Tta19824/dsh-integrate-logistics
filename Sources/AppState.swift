@@ -8,6 +8,10 @@ final class AppState: ObservableObject {
     @Published var toast: String?
     @Published var lastMessage: String?
     @Published var lastMessageAt: Date?
+    /// 平台页用来排障：轨迹库有几行、最近写了什么
+    @Published var traceInfo: String = ""
+    /// 最近一次后台补抓做了什么
+    @Published var enrichInfo: String = ""
 
     init() {
         reload()
@@ -15,6 +19,7 @@ final class AppState: ObservableObject {
 
     func reload() {
         orders = OrderStore.shared.all()
+        traceInfo = OrderStore.shared.traceDebug()
     }
 
     func isLoggedIn(_ platform: Platform) -> Bool {
@@ -89,7 +94,10 @@ final class AppState: ObservableObject {
             .filter { TraceCache.shared.get("tb:\($0.orderNo)") == nil }
             .prefix(limit)
             .map { $0.orderNo }
-        guard !targets.isEmpty else { return }
+        guard !targets.isEmpty else {
+            enrichInfo = "补抓：没有需要补的（缓存里都有）"
+            return
+        }
         Task { [weak self] in
             for no in targets {
                 guard let cap = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: no, cookieHeader: cookie) else { continue }
@@ -105,6 +113,8 @@ final class AppState: ObservableObject {
                 if let idx = self.orders.firstIndex(where: { $0.platform == .tb && $0.orderNo == no }) {
                     self.orders[idx].logistics = latest.desc
                 }
+                self.traceInfo = OrderStore.shared.traceDebug()
+                self.enrichInfo = "补抓：\(no) → \(latest.desc.prefix(20))"
             }
         }
     }

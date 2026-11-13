@@ -73,16 +73,53 @@ final class OrderStore {
 
     /// 卡片上显示的最新一条轨迹。单独存表：刷新会整平台 DELETE 再写回，
     /// 直接写在 orders.logistics 上会被列表接口的一句话摘要冲掉。
+    private(set) var lastTraceError = ""
+
+    /// 平台页「调试 · 轨迹库」用：看这张表到底有没有写进去。
+    func traceDebug() -> String {
+        queue.sync {
+            guard let db else { return "数据库没打开" }
+            var count = 0
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM trace_summary;", -1, &stmt, nil) == SQLITE_OK,
+               sqlite3_step(stmt) == SQLITE_ROW {
+                count = Int(sqlite3_column_int(stmt, 0))
+            } else {
+                return "查 trace_summary 失败：\(String(cString: sqlite3_errmsg(db)))"
+            }
+            sqlite3_finalize(stmt)
+
+            var sample = ""
+            var s2: OpaquePointer?
+            if sqlite3_prepare_v2(db, "SELECT order_no, text FROM trace_summary ORDER BY updated DESC LIMIT 1;", -1, &s2, nil) == SQLITE_OK,
+               sqlite3_step(s2) == SQLITE_ROW {
+                let no = text(s2, 0)
+                let tx = text(s2, 1)
+                sample = "\(no) → \(tx.prefix(28))"
+            }
+            sqlite3_finalize(s2)
+            var out = "轨迹库 \(count) 行"
+            if !sample.isEmpty { out += "｜最近 \(sample)" }
+            if !lastTraceError.isEmpty { out += "｜err \(lastTraceError)" }
+            return out
+        }
+    }
+
     func setTrace(orderNo: String, text value: String) {
         queue.sync {
             guard let db else { return }
             let sql = "INSERT INTO trace_summary (order_no, text, updated) VALUES (?, ?, ?) ON CONFLICT(order_no) DO UPDATE SET text = excluded.text, updated = excluded.updated;"
             var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                lastTraceError = "insert: " + String(cString: sqlite3_errmsg(db))
+                return
+            }
             sqlite3_bind_text(stmt, 1, orderNo, -1, nil)
             sqlite3_bind_text(stmt, 2, value, -1, nil)
             sqlite3_bind_double(stmt, 3, Date().timeIntervalSince1970)
-            sqlite3_step(stmt)
+            if sqlite3_step(stmt) != SQLITE_DONE {
+                lastTraceError = "step: " + String(cString: sqlite3_errmsg(db))
+            }
             sqlite3_finalize(stmt)
             // 顺手把订单行本身也改掉：重启后即使 overlay 没生效，卡片也是对的
             var ustmt: OpaquePointer?

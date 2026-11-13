@@ -55,6 +55,20 @@ struct PlatformsView: View {
                     Text("点有大小的一行即可分享出去（微信 → 文件传输助手）。")
                 }
 
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(app.traceInfo)
+                        if !app.enrichInfo.isEmpty {
+                            Text(app.enrichInfo).foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.caption)
+                } header: {
+                    Text("调试 · 轨迹库")
+                } footer: {
+                    Text("刷新后这行会变。如果显示「轨迹库 0 行」，说明轨迹根本没写进数据库。")
+                }
+
                 if let tb = app.orders.first(where: { $0.platform == .tb }) {
                     Section {
                         ForEach(Array(PddLink.tbCandidates(orderNo: tb.orderNo, itemID: tb.goodsID).enumerated()), id: \.offset) { pair in
