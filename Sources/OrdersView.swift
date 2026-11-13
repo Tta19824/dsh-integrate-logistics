@@ -496,6 +496,9 @@ struct LogisticsSheet: View {
                 if whole.carrier.isEmpty { whole.carrier = order.carrier }
             }
             if whole.tracking.isEmpty {
+                whole.tracking = TaobaoJdParser.trackingNumber(fromText: capL.text)
+            }
+            if whole.tracking.isEmpty {
                 whole.tracking = TaobaoJdParser.trackingNumber(fromLogisticsHTML: capL.html)
             }
             if whole.events.count > 1 {

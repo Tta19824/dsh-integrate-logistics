@@ -656,6 +656,28 @@ enum TaobaoJdParser {
     /// 从物流详情页的 HTML 里直接抽轨迹：页面把每条记录渲染成
     /// <span class="rax-text-v2 title">阶段</span><span class="rax-text-v2 subtitle">时间</span>
     /// <div class="rax-view-v2 flexRow desc">描述</div>
+    /// 物流页文字里的运单号：它单独占一行（「中通快递 / 79047620995550 / 复制」）。
+    /// 之前从 HTML 里抓第一串 10–16 位数字，先撞上的是揽件员手机号，所以显示错了。
+    static func trackingNumber(fromText text: String) -> String {
+        guard !text.isEmpty else { return "" }
+        let lines = text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        for (i, line) in lines.enumerated() {
+            guard line.count >= 10, line.count <= 16, line.allSatisfy({ $0.isNumber }) else { continue }
+            // 上一行或下一行是「复制」，基本可以确定这一行就是运单号
+            let prev = i > 0 ? lines[i - 1] : ""
+            let next = i + 1 < lines.count ? lines[i + 1] : ""
+            if next == "复制" || prev == "复制" { return line }
+        }
+        // 退一步：只要长度像运单号、且前后两行里出现过快递公司
+        let carriers = ["顺丰", "中通", "圆通", "韵达", "申通", "极兔", "邮政", "EMS", "德邦", "京东", "百世"]
+        for (i, line) in lines.enumerated() {
+            guard line.count >= 10, line.count <= 16, line.allSatisfy({ $0.isNumber }) else { continue }
+            let window = lines[max(0, i - 3)...min(lines.count - 1, i + 3)].joined(separator: " ")
+            if carriers.contains(where: { window.contains($0) }) { return line }
+        }
+        return ""
+    }
+
     /// 物流页 HTML 里的运单号：10–16 位（淘宝订单号是 19 位，排除）
     static func trackingNumber(fromLogisticsHTML html: String) -> String {
         guard !html.isEmpty else { return "" }
