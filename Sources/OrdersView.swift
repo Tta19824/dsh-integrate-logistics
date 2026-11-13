@@ -475,7 +475,18 @@ struct LogisticsSheet: View {
             best = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
         }
 
-        // 跟进没拿到轨迹时，直接开物流详情页再试一次
+        // 轨迹太少就先开 wuliu PC 页（服务端渲染，通常一次给全），再不行才开 mobile 物流页
+        if best.events.count < 4,
+           let capW = try? await WebOrderFetcher.shared.captureTaobaoWuliu(orderNo: order.orderNo, cookieHeader: cookie) {
+            let w = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: capW.payloadJSON, text: capW.text)
+            if w.events.count > best.events.count {
+                best = w
+                capturedText = capW.text
+                capturedChars = capW.text.count
+            }
+            try? capW.text.data(using: .utf8)?.write(to: OrderClient.tbDetailFile(for: .tb), options: .atomic)
+        }
+
         if best.events.isEmpty,
            let cap2 = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: order.orderNo, cookieHeader: cookie) {
             try? cap2.text.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)

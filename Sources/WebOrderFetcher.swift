@@ -59,6 +59,26 @@ final class WebOrderFetcher: NSObject {
         """
     }
 
+    /// 把页面和最长的可滚动容器都滚到底，返回当前正文字数
+    static var scrollBottomJS: String {
+        """
+        (function(){
+          var best = null, bestH = 0;
+          var nodes = document.querySelectorAll('div,section,ul,main');
+          for (var i = 0; i < nodes.length; i++) {
+            var n = nodes[i];
+            if (n.scrollHeight > n.clientHeight + 200 && n.clientHeight > 250) {
+              if (n.scrollHeight > bestH) { bestH = n.scrollHeight; best = n; }
+            }
+          }
+          if (best) { best.scrollTop = best.scrollHeight; }
+          if (document.scrollingElement) { document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight; }
+          window.scrollTo(0, document.body.scrollHeight);
+          return String(document.body ? (document.body.innerText || '').length : 0);
+        })()
+        """
+    }
+
     /// 当前页面正文字数，用来判断懒加载有没有新内容进来
     static var probeJS: String {
         """
@@ -269,10 +289,9 @@ final class WebOrderFetcher: NSObject {
                     // 物流页是懒加载：边滚边看字数，连续两次不涨就认为到底了（最多约 8 秒）
                     var stable = 0
                     var lastLen = 0
-                    for i in 0..<20 {
-                        try? await Task.sleep(nanoseconds: i == 0 ? 600_000_000 : 350_000_000)
-                        _ = try? await wv.evaluateJavaScript("window.scrollBy(0, 900)")
-                        let raw = (try? await wv.evaluateJavaScript(Self.probeJS)) as? String ?? "0"
+                    for i in 0..<14 {
+                        try? await Task.sleep(nanoseconds: i == 0 ? 500_000_000 : 400_000_000)
+                        let raw = (try? await wv.evaluateJavaScript(Self.scrollBottomJS)) as? String ?? "0"
                         let len = Int(raw) ?? 0
                         if len == lastLen { stable += 1 } else { stable = 0 }
                         lastLen = len
@@ -371,6 +390,15 @@ final class WebOrderFetcher: NSObject {
             throw FetchError.badURL
         }
         return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 9, clickTabs: false, strict: false, followLink: "查看物流")
+    }
+
+    /// 淘宝 PC 的物流详情页（服务端渲染完整轨迹），作为「查看物流」跟丢时的备选。
+    func captureTaobaoWuliu(orderNo: String, cookieHeader: String) async throws -> Capture {
+        let encoded = orderNo.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? orderNo
+        guard let url = URL(string: "https://wuliu.taobao.com/user/order_detail_new.htm?trade_id=\(encoded)") else {
+            throw FetchError.badURL
+        }
+        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 7, clickTabs: false, strict: false, scroll: false, expand: true)
     }
 
     /// 打开淘宝的物流轨迹页（和 App 里「查看物流」同一个页面），把接口响应抓回来。
