@@ -472,7 +472,7 @@ struct LogisticsSheet: View {
             let fast = TaobaoJdParser.parseTaobaoTraceHTML(html)
             if fast.count > 1 {
                 best.events = fast
-                best.tracking = order.trackingNumber
+                best.tracking = ""
                 best.carrier = order.carrier
                 capturedText = html
                 capturedChars = html.count
@@ -486,7 +486,6 @@ struct LogisticsSheet: View {
             let fromHTML = TaobaoJdParser.parseTaobaoTraceHTML(capL.html)
             if fromHTML.count > whole.events.count {
                 whole.events = fromHTML
-                if whole.tracking.isEmpty { whole.tracking = order.trackingNumber }
                 if whole.carrier.isEmpty { whole.carrier = order.carrier }
             }
             if whole.events.count > 1 {
