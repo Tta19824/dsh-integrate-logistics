@@ -47,6 +47,7 @@ final class OrderStore {
         sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN goods_id TEXT;", nil, nil, nil)
         sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN carrier TEXT;", nil, nil, nil)
         sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS trace_summary (order_no TEXT PRIMARY KEY, text TEXT, updated REAL);", nil, nil, nil)
+        sqlite3_exec(db, "DELETE FROM trace_summary WHERE order_no IS NULL OR order_no = '' OR text IS NULL OR text = '';", nil, nil, nil)
         if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
             NSLog("[store] create table failed: \(String(cString: sqlite3_errmsg(db)))")
         }
@@ -114,8 +115,8 @@ final class OrderStore {
                 lastTraceError = "insert: " + String(cString: sqlite3_errmsg(db))
                 return
             }
-            sqlite3_bind_text(stmt, 1, orderNo, -1, nil)
-            sqlite3_bind_text(stmt, 2, value, -1, nil)
+            sqlite3_bind_text(stmt, 1, orderNo, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT)
             sqlite3_bind_double(stmt, 3, Date().timeIntervalSince1970)
             if sqlite3_step(stmt) != SQLITE_DONE {
                 lastTraceError = "step: " + String(cString: sqlite3_errmsg(db))
@@ -124,8 +125,8 @@ final class OrderStore {
             // 顺手把订单行本身也改掉：重启后即使 overlay 没生效，卡片也是对的
             var ustmt: OpaquePointer?
             if sqlite3_prepare_v2(db, "UPDATE orders SET logistics = ? WHERE order_no = ?;", -1, &ustmt, nil) == SQLITE_OK {
-                sqlite3_bind_text(ustmt, 1, value, -1, nil)
-                sqlite3_bind_text(ustmt, 2, orderNo, -1, nil)
+                sqlite3_bind_text(ustmt, 1, value, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(ustmt, 2, orderNo, -1, SQLITE_TRANSIENT)
                 sqlite3_step(ustmt)
             }
             sqlite3_finalize(ustmt)
