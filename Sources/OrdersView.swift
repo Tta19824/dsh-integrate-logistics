@@ -436,14 +436,6 @@ struct LogisticsSheet: View {
                 .foregroundStyle(tracking.isEmpty ? .secondary : .primary)
                 .textSelection(.enabled)
             Spacer(minLength: 8)
-            if !carrierLine.isEmpty {
-                Text(carrierLine)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color(.tertiarySystemFill), in: Capsule())
-            }
             if !costLabel.isEmpty {
                 Text(costLabel)
                     .font(.caption2.monospacedDigit())
@@ -574,6 +566,11 @@ struct LogisticsSheet: View {
         }
         if !events.isEmpty {
             TraceCache.shared.put(cacheKey, TraceCache.Item(at: Date(), events: events, tracking: tracking, carrier: carrierLine))
+            // 详情页抓到的东西也要落库：之前只有后台补抓会写 trace_summary，
+            // 用户手动点开过之后补抓又会被缓存跳过，卡片就一直是摘要。
+            if let latest = events.first, !latest.desc.isEmpty {
+                OrderStore.shared.setTrace(orderNo: order.orderNo, text: latest.desc)
+            }
         }
 
         if events.isEmpty {
@@ -587,8 +584,9 @@ struct LogisticsSheet: View {
 
         let cost = Date().timeIntervalSince(openedAt)
         costLabel = String(format: "%.1f 秒", cost)
-        await refreshRoute()
+        // 轨迹已经拿到了，先结束 loading；地理编码与路径规划慢，留着让地图自己补线
         loading = false
+        await refreshRoute()
     }
 
     /// 由轨迹里的地名算坐标、再求沿公路的折线。缓存命中时也要跑一遍，否则地图空白。
@@ -643,8 +641,8 @@ struct LogisticsSheet: View {
             return
         }
 
-        await refreshRoute(target: address)
         loading = false
+        await refreshRoute(target: address)
     }
 }
 
