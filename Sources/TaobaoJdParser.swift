@@ -791,7 +791,11 @@ enum TaobaoJdParser {
     /// 「今天 16:23」「昨天 09:12」「11-12 16:23」「2026-11-12 16:23」统一成「MM-dd HH:mm」
     /// 「今天 16:23」「昨天 09:12」「11-12 16:23」「2026-11-12 16:23:07」统一成「MM-dd HH:mm」
     private static func normalizeTraceTime(_ raw: String) -> String {
-        let text = raw.trimmingCharacters(in: .whitespaces)
+        var text = raw.trimmingCharacters(in: .whitespaces)
+        // 一行里可能并排出现两个时间（日期 + 时间），只取第一个时间片段，避免拼成「11-12 18:30 22:26」
+        if let r = text.range(of: #"(?:(?:今天|昨天|前天)\s*)?(?:(?:\d{4}-)?\d{1,2}-\d{1,2}\s*)?\d{1,2}:\d{2}(?::\d{2})?"#, options: .regularExpression) {
+            text = String(text[r])
+        }
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "zh_CN")
         fmt.dateFormat = "MM-dd HH:mm"

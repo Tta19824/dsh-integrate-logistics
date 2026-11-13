@@ -59,6 +59,13 @@ final class WebOrderFetcher: NSObject {
         """
     }
 
+    /// 当前页面正文字数，用来判断懒加载有没有新内容进来
+    static var probeJS: String {
+        """
+        (function(){ var t = document.body ? (document.body.innerText || '') : ''; return String(t.length); })()
+        """
+    }
+
     /// 默认只展示最新两条，点「展开更多物流明细」把剩下的拉出来（只点非链接元素，避免整页跳走）
     static var expandTraceJS: String {
         """
@@ -259,15 +266,22 @@ final class WebOrderFetcher: NSObject {
                    href.hasPrefix("http"), let next = URL(string: href) {
                     followed = href
                     _ = try? await wv.load(URLRequest(url: next))
-                    // 物流页内容多，但不用死等：一出现「快件/已签收/派送」就直接往下走
-                    for _ in 0..<24 {
-                        try? await Task.sleep(nanoseconds: 400_000_000)
-                        let probe = (try? await wv.evaluateJavaScript("document.body ? document.body.innerText.length : 0")) as? Int ?? 0
-                        if probe > 1500 { break }
+                    // 物流页是懒加载：边滚边看字数，连续两次不涨就认为到底了（最多约 8 秒）
+                    var stable = 0
+                    var lastLen = 0
+                    for i in 0..<20 {
+                        try? await Task.sleep(nanoseconds: i == 0 ? 600_000_000 : 350_000_000)
+                        _ = try? await wv.evaluateJavaScript("window.scrollBy(0, 900)")
+                        let raw = (try? await wv.evaluateJavaScript(Self.probeJS)) as? String ?? "0"
+                        let len = Int(raw) ?? 0
+                        if len == lastLen { stable += 1 } else { stable = 0 }
+                        lastLen = len
+                        if len > 1200 && stable >= 2 { break }
                     }
-                    // 默认只露最新两条，剩下的要点「展开更多物流明细」
+                    _ = try? await wv.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight)")
+                    try? await Task.sleep(nanoseconds: 450_000_000)
                     _ = try? await wv.evaluateJavaScript(Self.expandTraceJS)
-                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    try? await Task.sleep(nanoseconds: 900_000_000)
                 }
             }
 
@@ -356,7 +370,7 @@ final class WebOrderFetcher: NSObject {
         guard let url = URL(string: "https://buyertrade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=\(encoded)") else {
             throw FetchError.badURL
         }
-        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 14, clickTabs: false, strict: false, followLink: "查看物流")
+        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 9, clickTabs: false, strict: false, followLink: "查看物流")
     }
 
     /// 打开淘宝的物流轨迹页（和 App 里「查看物流」同一个页面），把接口响应抓回来。
