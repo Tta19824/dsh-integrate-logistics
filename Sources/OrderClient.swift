@@ -89,6 +89,16 @@ enum OrderClient {
         rawDirectory().appendingPathComponent("resources_\(platform.rawValue).json")
     }
 
+    /// 淘宝物流页的 HTML（轨迹可能直接内嵌在初始 HTML 的 JSON 里）
+    static func tbLogisticsHTMLFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("tb_logistics_page_\(platform.rawValue).html")
+    }
+
+    /// 订单详情页加载过的资源地址
+    static func resourcesDetailFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("resources_detail_\(platform.rawValue).json")
+    }
+
     /// 淘宝订单详情页的页面文字（排查快递公司与轨迹用）
     static func tbDetailFile(for platform: Platform) -> URL {
         rawDirectory().appendingPathComponent("tb_detail_\(platform.rawValue).txt")
@@ -489,7 +499,9 @@ enum OrderClient {
             DebugFile(id: "tblogi-\(platform.rawValue)", label: "\(platform.name) · 物流接口", url: tbLogisticsFile(for: platform)),
             DebugFile(id: "digest-\(platform.rawValue)", label: "\(platform.name) · 图片时间", url: digestFile(for: platform)),
             DebugFile(id: "tbdetail-\(platform.rawValue)", label: "\(platform.name) · 订单详情页", url: tbDetailFile(for: platform)),
-            DebugFile(id: "resources-\(platform.rawValue)", label: "\(platform.name) · 资源地址", url: resourcesFile(for: platform))
+            DebugFile(id: "resources-\(platform.rawValue)", label: "\(platform.name) · 资源地址", url: resourcesFile(for: platform)),
+            DebugFile(id: "tblogihtml-\(platform.rawValue)", label: "\(platform.name) · 物流页源码", url: tbLogisticsHTMLFile(for: platform)),
+            DebugFile(id: "resourcesdetail-\(platform.rawValue)", label: "\(platform.name) · 详情页资源", url: resourcesDetailFile(for: platform))
         ]
     }
 }

@@ -464,6 +464,7 @@ struct LogisticsSheet: View {
         var landedURL = ""
         var loggedSecond = ""
         var followedURL = ""
+        var logisticsLanding = ""
         var best = TaobaoJdParser.TbLogistics()
 
         // 先直接开物流轨迹页：它的 mtop 响应走 JSONP，钩子能抓到全量轨迹，比解析页面文字靠谱
@@ -477,6 +478,8 @@ struct LogisticsSheet: View {
             }
             try? capL.payloadJSON.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
             try? capL.resources.data(using: .utf8)?.write(to: OrderClient.resourcesFile(for: .tb), options: .atomic)
+            try? capL.html.data(using: .utf8)?.write(to: OrderClient.tbLogisticsHTMLFile(for: .tb), options: .atomic)
+            logisticsLanding = capL.finalURL
         }
 
         if best.events.count < 3,
@@ -487,6 +490,7 @@ struct LogisticsSheet: View {
             followedURL = cap.followedURL
             try? cap.text.data(using: .utf8)?.write(to: OrderClient.tbDetailFile(for: .tb), options: .atomic)
             try? cap.payloadJSON.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
+            try? cap.resources.data(using: .utf8)?.write(to: OrderClient.resourcesDetailFile(for: .tb), options: .atomic)
             let one = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: cap.payloadJSON, text: cap.text)
             if one.events.count > best.events.count {
                 best = one
