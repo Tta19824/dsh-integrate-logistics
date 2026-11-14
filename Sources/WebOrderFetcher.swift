@@ -608,7 +608,7 @@ final class WebOrderFetcher: NSObject {
         return false
     }
 
-    private func makeWebView() -> WKWebView {
+    private func makeWebView(slot: String = "main") -> WKWebView {
         let cfg = WKWebViewConfiguration()
         cfg.websiteDataStore = .default()
         cfg.allowsInlineMediaPlayback = true
