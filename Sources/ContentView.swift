@@ -67,7 +67,7 @@ struct LoginSheet: View {
         NavigationStack {
             WebView(
                 url: platform.loginURL,
-                desktop: platform == .pdd,
+                desktop: platform == .pdd || platform == .jd,
                 clearDomains: platform.cookieDomainHints,
                 autoQR: platform == .pdd,
                 onReady: { handle.view = $0 }
@@ -105,12 +105,12 @@ struct LoginSheet: View {
                         }
                         .bold()
                     }
-                    if platform == .pdd {
+                    if platform == .pdd || platform == .jd {
                         ToolbarItem(placement: .bottomBar) {
                             Button {
                                 saveQRAndScan()
                             } label: {
-                                Label("保存二维码并打开扫一扫", systemImage: "qrcode.viewfinder")
+                                Label(platform == .pdd ? "保存二维码并打开拼多多" : "保存二维码并打开京东", systemImage: "qrcode.viewfinder")
                             }
                         }
                     }
@@ -199,7 +199,7 @@ struct LoginSheet: View {
                             app.toast = ok
                                 ? "二维码已存相册 → 拼多多右上角「扫一扫」→「相册」"
                                 : "保存失败"
-                            Self.openPdd()
+                            if platform == .jd { Self.openJD() } else { Self.openPdd() }
                         }
                     }
                 }
@@ -235,6 +235,14 @@ struct LoginSheet: View {
         let candidates = [
             "pinduoduo://com.xunmeng.pinduoduo",
             "pinduoduo://"
+        ]
+        openFirst(candidates)
+    }
+
+    private static func openJD() {
+        let candidates = [
+            "openapp.jdmobile://",
+            "openapp.jdpingou://"
         ]
         openFirst(candidates)
     }
