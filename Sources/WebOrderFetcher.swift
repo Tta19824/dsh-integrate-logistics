@@ -125,18 +125,48 @@ final class WebOrderFetcher: NSObject {
           if (window.__dshInstalled) return;
           window.__dshInstalled = true;
           window.__dshCap = [];
-          function push(u, t) {
+          function clip(s, n) {
+            try { var t = String(s === undefined || s === null ? '' : s); return t.length > n ? t.slice(0, n) : t; }
+            catch (e) { return ''; }
+          }
+          function hdr(h) {
+            var o = {};
+            try {
+              if (!h) return o;
+              if (typeof h.forEach === 'function') {
+                h.forEach(function (v, k) { o[String(k)] = String(v); });
+              } else if (Object.prototype.toString.call(h) === '[object Array]') {
+                for (var i = 0; i < h.length; i++) {
+                  var pair = h[i];
+                  if (pair && pair.length === 2) o[String(pair[0])] = String(pair[1]);
+                }
+              } else {
+                for (var k in h) { if (Object.prototype.hasOwnProperty.call(h, k)) o[String(k)] = String(h[k]); }
+              }
+            } catch (e) {}
+            return o;
+          }
+          function push(u, t, r) {
             try {
               if (typeof t !== 'string' || t.length === 0 || t.length > 900000) return;
-              window.__dshCap.push({ u: String(u || '').slice(0, 400), b: t });
+              var item = { u: String(u || '').slice(0, 400), b: t };
+              if (r) item.r = r;
+              window.__dshCap.push(item);
             } catch (e) {}
           }
           var of = window.fetch;
           if (of) {
             window.fetch = function() {
               var args = arguments;
+              var init = args[1] || {};
+              var req = {
+                u: clip(typeof args[0] === 'string' ? args[0] : ((args[0] && args[0].url) || ''), 1200),
+                m: String(init.method || (args[0] && args[0].method) || 'GET').toUpperCase(),
+                h: hdr(init.headers),
+                d: clip(init.body, 6000)
+              };
               return of.apply(this, args).then(function(r) {
-                try { r.clone().text().then(function(t){ push(r.url || (args[0] && args[0].url) || '', t); }); } catch (e) {}
+                try { r.clone().text().then(function(t){ push(r.url || req.u, t, req); }); } catch (e) {}
                 return r;
               });
             };
@@ -181,11 +211,22 @@ final class WebOrderFetcher: NSObject {
 
           var oo = XMLHttpRequest.prototype.open;
           var os = XMLHttpRequest.prototype.send;
-          XMLHttpRequest.prototype.open = function(m, u) { this.__dshUrl = u; return oo.apply(this, arguments); };
-          XMLHttpRequest.prototype.send = function() {
+          var oh = XMLHttpRequest.prototype.setRequestHeader;
+          XMLHttpRequest.prototype.open = function(m, u) {
+            this.__dshM = String(m || 'GET').toUpperCase();
+            this.__dshUrl = u;
+            this.__dshH = {};
+            return oo.apply(this, arguments);
+          };
+          XMLHttpRequest.prototype.setRequestHeader = function(k, v) {
+            try { if (!this.__dshH) this.__dshH = {}; this.__dshH[String(k)] = String(v); } catch (e) {}
+            return oh.apply(this, arguments);
+          };
+          XMLHttpRequest.prototype.send = function(body) {
             var x = this;
             try {
-              x.addEventListener('load', function(){ try { push(x.__dshUrl, x.responseText); } catch (e) {} });
+              var req = { u: clip(x.__dshUrl, 1200), m: x.__dshM || 'GET', h: x.__dshH || {}, d: clip(body, 6000) };
+              x.addEventListener('load', function(){ try { push(x.__dshUrl, x.responseText, req); } catch (e) {} });
             } catch (e) {}
             return os.apply(this, arguments);
           };

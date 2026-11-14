@@ -269,6 +269,10 @@ enum OrderClient {
         if orders.isEmpty, !info.snippet.isEmpty {
             note += "；页面开头：\(info.snippet.prefix(50))"
         }
+        if platform == .jd {
+            let directLine = await JdDirect.probe(payloadJSON: capture.payloadJSON, cookie: cookie)
+            if !directLine.isEmpty { note += "；" + directLine }
+        }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
         note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
 
