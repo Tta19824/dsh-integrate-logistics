@@ -125,10 +125,14 @@ struct LoginSheet: View {
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
             let current = Dictionary(cookies.map { ($0.name, $0.value) }, uniquingKeysWith: { a, _ in a })
             let elapsed = Int(Date().timeIntervalSince(started))
-            let key = current["pt_key"] ?? "-"
-            let base = baseline["pt_key"] ?? "-"
-            let jdCount = cookies.filter { $0.domain.contains("jd.com") }.count
-            let msg = "t=\(elapsed) key=\(key.prefix(6)) base=\(base.prefix(6)) jd=\(jdCount)"
+            let names = platform.essentialCookies
+            var parts: [String] = []
+            for name in names {
+                let v = current[name] ?? "-"
+                let b = baseline[name] ?? "-"
+                parts.append("\(name)=\(v.prefix(6))/\(b.prefix(6))")
+            }
+            let msg = "t=\(elapsed) " + parts.joined(separator: " ") + " n=\(current.count)"
             let hit = platform.essentialCookies.allSatisfy { name in
                 guard let v = current[name], !v.isEmpty else { return false }
                 return baseline[name] != v
