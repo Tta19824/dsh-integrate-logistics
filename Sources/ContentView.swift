@@ -65,10 +65,23 @@ struct LoginSheet: View {
             WebView(
                 url: platform.loginURL,
                 desktop: platform == .pdd,
-                clearDomains: platform == .pdd ? ["pinduoduo.com", "yangkeduo.com"] : [],
+                clearDomains: platform.cookieDomainHints,
                 autoQR: platform == .pdd,
                 onReady: { handle.view = $0 }
             )
+                .onAppear {
+                    // 钥匙串里上次保存的凭证：这些值不能当作「刚登录成功」
+                    var dict: [String: String] = [:]
+                    if let header = CookieStore.load(for: platform) {
+                        for part in header.split(separator: ";") {
+                            let kv = part.split(separator: "=", maxSplits: 1)
+                            if kv.count == 2 {
+                                dict[kv[0].trimmingCharacters(in: .whitespaces)] = kv[1].trimmingCharacters(in: .whitespaces)
+                            }
+                        }
+                    }
+                    baseline = dict
+                }
                 .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
                     detectLogin()
                 }
@@ -104,8 +117,12 @@ struct LoginSheet: View {
     private func detectLogin() {
         guard !autoClosed else { return }
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
-            let names = Set(cookies.map { $0.name })
-            let hit = platform.essentialCookies.allSatisfy { names.contains($0) }
+            let current = Dictionary(cookies.map { ($0.name, $0.value) }, uniquingKeysWith: { a, _ in a })
+            // 必须全部存在，而且不能还是进来之前那个旧值（否则等于「上次登录的残留」）
+            let hit = platform.essentialCookies.allSatisfy { name in
+                guard let v = current[name], !v.isEmpty else { return false }
+                return baseline[name] != v
+            }
             guard hit else { return }
             DispatchQueue.main.async {
                 guard !autoClosed else { return }
