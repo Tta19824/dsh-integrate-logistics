@@ -56,6 +56,7 @@ struct ContentView: View {
 struct LoginSheet: View {
     let platform: Platform
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var loginScenePhase
     @EnvironmentObject private var app: AppState
     @StateObject private var handle = WebHandle()
     @State private var autoClosed = false
@@ -88,7 +89,7 @@ struct LoginSheet: View {
                 .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
                     detectLogin()
                 }
-                .onChange(of: scenePhase) { phase in
+                .onChange(of: loginScenePhase) { phase in
                     guard phase == .active else { return }
                     detectLogin()
                     guard platform == .jd, !autoClosed else { return }
