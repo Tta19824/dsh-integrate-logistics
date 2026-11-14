@@ -52,6 +52,18 @@ enum JdDirect {
         for (k, v) in req.headers where !skip.contains(k.lowercased()) {
             r.setValue(v, forHTTPHeaderField: k)
         }
+        // 浏览器自己补的头，JS 抓不到，重放时手动补齐
+        let ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        let defaults: [(String, String)] = [
+            ("User-Agent", ua),
+            ("Accept", "application/json, text/plain, */*"),
+            ("Accept-Language", "zh-CN,zh;q=0.9"),
+            ("Referer", "https://my.m.jd.com/"),
+            ("Origin", "https://my.m.jd.com")
+        ]
+        for (key, value) in defaults where r.value(forHTTPHeaderField: key) == nil {
+            r.setValue(value, forHTTPHeaderField: key)
+        }
         r.setValue(cookie, forHTTPHeaderField: "Cookie")
         if let body = req.body, req.method.uppercased() != "GET" {
             r.httpBody = body.data(using: .utf8)
