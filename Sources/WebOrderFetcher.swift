@@ -160,10 +160,10 @@ final class WebOrderFetcher: NSObject {
               var args = arguments;
               var init = args[1] || {};
               var req = {
-                u: clip(typeof args[0] === 'string' ? args[0] : ((args[0] && args[0].url) || ''), 1200),
+                u: clip(typeof args[0] === 'string' ? args[0] : ((args[0] && args[0].url) || ''), 30000),
                 m: String(init.method || (args[0] && args[0].method) || 'GET').toUpperCase(),
                 h: hdr(init.headers),
-                d: clip(init.body, 6000)
+                d: clip(init.body, 30000)
               };
               return of.apply(this, args).then(function(r) {
                 try { r.clone().text().then(function(t){ push(r.url || req.u, t, req); }); } catch (e) {}
@@ -225,7 +225,7 @@ final class WebOrderFetcher: NSObject {
           XMLHttpRequest.prototype.send = function(body) {
             var x = this;
             try {
-              var req = { u: clip(x.__dshUrl, 1200), m: x.__dshM || 'GET', h: x.__dshH || {}, d: clip(body, 6000) };
+              var req = { u: clip(x.__dshUrl, 30000), m: x.__dshM || 'GET', h: x.__dshH || {}, d: clip(body, 30000) };
               x.addEventListener('load', function(){ try { push(x.__dshUrl, x.responseText, req); } catch (e) {} });
             } catch (e) {}
             return os.apply(this, arguments);
@@ -406,7 +406,7 @@ final class WebOrderFetcher: NSObject {
                         let len = Int(raw) ?? 0
                         if len == lastLen { stable += 1 } else { stable = 0 }
                         lastLen = len
-                        if len > 1200 && stable >= 2 { break }
+                        if len > 30000 && stable >= 2 { break }
                     }
                     _ = try? await wv.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight)")
                     try? await Task.sleep(nanoseconds: 450_000_000)
