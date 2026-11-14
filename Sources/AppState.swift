@@ -77,7 +77,7 @@ final class AppState: ObservableObject {
                 }
                 reload()
                 busy = nil
-                if !quiet { show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)") }
+                show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)")
             } catch {
                 busy = nil
                 show("\(platform.name)：\(error.localizedDescription)")
