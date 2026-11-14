@@ -133,7 +133,7 @@ struct LoginSheet: View {
             let current = Dictionary(cookies.map { ($0.name, $0.value) }, uniquingKeysWith: { a, _ in a })
             let elapsed = Int(Date().timeIntervalSince(started))
 
-                    debugText = "t=\(elapsed) 采样 " + snap.map { $0.key + "=" + String($0.value.prefix(6)) }.joined(separator: " ")
+            // 第一次采样：只记录，不判定（京东的访客会话也会下发 pt_key）
             if liveBaseline.isEmpty {
                 var snap: [String: String] = [:]
                 for name in platform.essentialCookies {
@@ -141,7 +141,7 @@ struct LoginSheet: View {
                 }
                 DispatchQueue.main.async {
                     liveBaseline = snap
-                    debugText = "t=\(elapsed) 采样 \(snap.map { $0.key + "=" + String($0.value.prefix(6)) }.joined(separator: " "))"
+                    debugText = "t=\(elapsed) 采样 " + snap.map { $0.key + "=" + String($0.value.prefix(6)) }.joined(separator: " ")
                 }
                 return
             }
