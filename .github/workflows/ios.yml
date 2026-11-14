@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: 探针（验证非 macOS 机器是否正常）
+      - name: probe
         run: echo "ci-probe ok"
 
   build:
@@ -21,21 +21,21 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: 检出代码
+      - name: checkout
         uses: actions/checkout@v4
 
-      - name: 环境信息
+      - name: env info
         run: |
           xcodebuild -version || true
           ls /Applications | grep -i xcode || true
 
-      - name: 安装 XcodeGen
+      - name: install xcodegen
         run: brew install xcodegen
 
-      - name: 生成 Xcode 工程
+      - name: generate project
         run: xcodegen generate
 
-      - name: 编译（不签名）
+      - name: build
         run: |
           set -o pipefail
           xcodebuild \
@@ -48,9 +48,17 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build
+            build 2>&1 | tee build.log
 
-      - name: 打包成 ipa
+      - name: upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
+
+      - name: pack ipa
         run: |
           set -euo pipefail
           APP_PATH="build/Build/Products/Release-iphoneos/OrderPocket.app"
@@ -59,23 +67,21 @@ jobs:
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
           zip -qry OrderPocket.ipa Payload
-          echo "--- ipa 大小 ---"
           ls -lh OrderPocket.ipa
-          echo "--- 二进制架构 ---"
           lipo -info Payload/OrderPocket.app/OrderPocket || true
 
-      - name: 上传构建产物
+      - name: upload ipa
         uses: actions/upload-artifact@v4
         with:
           name: OrderPocket-ipa
           path: OrderPocket.ipa
           retention-days: 30
 
-      - name: 发布到 Release（方便手机直接下载）
+      - name: release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: smoke
-          name: 冒烟测试包
-          body: 只用于验证签名、安装、运行链路。
+          name: smoke
+          body: unsigned ipa for sideloading
           files: OrderPocket.ipa
