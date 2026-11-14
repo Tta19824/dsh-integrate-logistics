@@ -59,6 +59,7 @@ struct LoginSheet: View {
     @EnvironmentObject private var app: AppState
     @StateObject private var handle = WebHandle()
     @State private var autoClosed = false
+    @State private var baseline: [String: String] = [:]
 
     var body: some View {
         NavigationStack {
