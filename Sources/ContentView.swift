@@ -68,7 +68,7 @@ struct LoginSheet: View {
         NavigationStack {
             WebView(
                 url: platform.loginURL,
-                desktop: platform == .pdd || platform == .jd,
+                desktop: platform == .pdd,
                 clearDomains: platform.cookieDomainHints,
                 autoQR: platform == .pdd,
                 onReady: { handle.view = $0 }
@@ -90,15 +90,7 @@ struct LoginSheet: View {
                     detectLogin()
                 }
                 .onChange(of: loginScenePhase) { phase in
-                    guard phase == .active else { return }
-                    detectLogin()
-                    guard platform == .jd, !autoClosed else { return }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                        guard !autoClosed, let wv = handle.view else { return }
-                        let list = URL(string: "https://order.jd.com/center/list.action")!
-                        if let cur = wv.url?.absoluteString, cur.contains("order.jd.com") { return }
-                        wv.load(URLRequest(url: list))
-                    }
+                    if phase == .active { detectLogin() }
                 }
                 .overlay(alignment: .bottom) {
                     Text(debugText).font(.system(size: 10)).foregroundColor(.secondary).padding(4)
@@ -117,7 +109,7 @@ struct LoginSheet: View {
                         }
                         .bold()
                     }
-                    if platform == .pdd || platform == .jd {
+                    if platform == .pdd {
                         ToolbarItem(placement: .bottomBar) {
                             Button {
                                 saveQRAndScan()
@@ -215,7 +207,7 @@ struct LoginSheet: View {
                             app.toast = ok
                                 ? "二维码已存相册 → 拼多多右上角「扫一扫」→「相册」"
                                 : "保存失败"
-                            if platform == .jd { Self.openJD() } else { Self.openPdd() }
+                            Self.openPdd()
                         }
                     }
                 }

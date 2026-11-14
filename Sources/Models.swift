@@ -27,7 +27,7 @@ enum Platform: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .pdd: return URL(string: "https://mobile.pinduoduo.com/login.html?from=https%3A%2F%2Fmobile.pinduoduo.com")!
         case .tb: return URL(string: "https://main.m.taobao.com/mytaobao/index.html")!
-        case .jd: return URL(string: "https://order.jd.com/center/list.action")!
+        case .jd: return URL(string: "https://plogin.m.jd.com/login/login")!
         }
     }
 
@@ -44,7 +44,7 @@ enum Platform: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .pdd: return ["PDDAccessToken"]
         case .tb: return ["cookie2", "unb"]
-        case .jd: return ["thor", "pin"]
+        case .jd: return ["pt_key", "pt_pin"]
         }
     }
 }
