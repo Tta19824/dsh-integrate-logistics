@@ -147,10 +147,9 @@ enum OrderClient {
             cookie: cookie,
             urls: [
                 "https://home.m.jd.com/myOrders/myOrders.action",
-                "https://order.m.jd.com/orderList/1",
-                "https://m.jd.com/order/orderList.action"
+                "https://order.m.jd.com/orderList/1"
             ],
-            seconds: 22,
+            seconds: 11,
             readyJS: "(document.body.innerText.match(/订单号|订单编号/g) || []).length >= 1 ? '1' : '0'"
         )
     }

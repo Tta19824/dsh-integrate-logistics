@@ -157,7 +157,9 @@ struct LoginSheet: View {
             let msg = "t=\(elapsed) " + parts.joined(separator: " ") + (onLoginPage ? " 登录页" : " 已跳出")
             DispatchQueue.main.async {
                 debugText = msg
-                guard changed, !onLoginPage, elapsed > 5, !autoClosed else { return }
+                let relaxed = (platform == .jd)
+                let urlOK = relaxed || !onLoginPage
+                guard changed, urlOK, elapsed > (relaxed ? 8 : 5), !autoClosed else { return }
                 autoClosed = true
                 app.finishLogin(platform)
                 app.toast = "\(platform.name)登录成功，凭证已自动保存"

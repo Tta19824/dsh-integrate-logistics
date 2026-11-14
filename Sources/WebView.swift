@@ -110,12 +110,19 @@ struct WebView: UIViewRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
-            if let url = navigationAction.request.url,
-               let scheme = url.scheme?.lowercased(),
-               !["http", "https", "about", "data", "javascript", "file", "blob"].contains(scheme) {
-                NSLog("[web] blocked external scheme \(scheme)")
-                decisionHandler(.cancel)
-                return
+            if let url = navigationAction.request.url {
+                let scheme = url.scheme?.lowercased() ?? ""
+                let host = url.host?.lowercased() ?? ""
+                let path = url.path.lowercased()
+                let abs = url.absoluteString.lowercased()
+                let universalJump = (host.hasSuffix("jd.com") || host.hasSuffix("jd.hk"))
+                    && (path.contains("openapp") || abs.contains("openapp.jdmobile") || abs.contains("&openapp=1"))
+                let customScheme = !["http", "https", "about", "data", "javascript", "file", "blob"].contains(scheme)
+                if universalJump || customScheme {
+                    NSLog("[web] blocked external jump \(url.absoluteString.prefix(120))")
+                    decisionHandler(.cancel)
+                    return
+                }
             }
             if navigationAction.targetFrame == nil {
                 webView.load(navigationAction.request)
