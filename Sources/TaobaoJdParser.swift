@@ -37,6 +37,10 @@ enum TaobaoJdParser {
             let fromBoughtList = parseTaobaoBoughtList(payloadJSON: payloadJSON)
             if !fromBoughtList.isEmpty { return fromBoughtList }
         }
+        if platform == .jd {
+            let fromJD = parseJdOrderList(payloadJSON: payloadJSON)
+            if !fromJD.isEmpty { return fromJD }
+        }
         let fromJSON = parseJSON(platform: platform, payloadJSON: payloadJSON)
         if !fromJSON.isEmpty { return fromJSON }
         let fromHTML = parseHTML(platform: platform, html: html)
@@ -211,6 +215,85 @@ enum TaobaoJdParser {
                 }
             }
         }
+    }
+
+    // MARK: - 京东 orderList 接口（api.m.jd.com/client.action）
+
+    /// 京东订单状态词 → 统一状态
+    static func jdStatus(_ raw: String) -> OrderStatus {
+        if raw.contains("取消") || raw.contains("已关闭") { return .cancelled }
+        if raw.contains("退款") || raw.contains("退货") || raw.contains("售后") { return .refunding }
+        if raw.contains("完成") || raw.contains("已收货") { return .completed }
+        if raw.contains("收货") || raw.contains("发货") || raw.contains("运输")
+            || raw.contains("派送") || raw.contains("配送") || raw.contains("途中") { return .shipped }
+        if raw.contains("出库") || raw.contains("待发货") || raw.contains("打包")
+            || raw.contains("处理中") || raw.contains("等待") || raw.contains("正在") { return .paid }
+        if raw.contains("付款") { return .unpaid }
+        return .unknown
+    }
+
+    /// 京东「我的订单」接口：响应体是 {"body":{"orderList":[...]}}。
+    static func parseJdOrderList(payloadJSON: String) -> [Order] {
+        guard let data = payloadJSON.data(using: .utf8),
+              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+
+        var out: [Order] = []
+        var seen = Set<String>()
+
+        for entry in entries {
+            guard let body = entry["b"] as? String, body.contains("orderList"),
+                  let bodyData = body.data(using: .utf8),
+                  let root = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
+                  let payload = root["body"] as? [String: Any],
+                  let list = payload["orderList"] as? [[String: Any]] else {
+                continue
+            }
+
+            for item in list {
+                var orderNo = ""
+                if let s = item["orderId"] as? String { orderNo = s }
+                else if let n = item["orderId"] as? NSNumber { orderNo = n.stringValue }
+                guard !orderNo.isEmpty, !seen.contains(orderNo) else { continue }
+                seen.insert(orderNo)
+
+                let statusInfo = item["orderStatusInfo"] as? [String: Any] ?? [:]
+                let statusRaw = statusInfo["orderStatusName"] as? String ?? ""
+                let shop = (item["shopInfo"] as? [String: Any])?["shopName"] as? String ?? ""
+                let wares = item["wareInfoList"] as? [[String: Any]] ?? []
+                let first = wares.first ?? [:]
+                let title = first["wareName"] as? String ?? ""
+                let image = normalizeURL(first["imageUrl"] as? String ?? "")
+                var sku = ""
+                if let s = first["skuId"] as? String { sku = s }
+                else if let n = first["skuId"] as? NSNumber { sku = n.stringValue }
+                let amount = normalizeAmount(item["shouldPay"] as? String ?? "")
+                let progress = item["progressInfo"] as? [String: Any] ?? [:]
+                let logistics = progress["content"] as? String ?? ""
+                let time = normalizeTime(item["submitDate"] as? String ?? "")
+
+                out.append(Order(
+                    id: Order.makeID(platform: .jd, orderNo: orderNo),
+                    platform: .jd,
+                    orderNo: orderNo,
+                    title: title,
+                    shopName: shop,
+                    amount: amount,
+                    status: jdStatus(statusRaw),
+                    statusRaw: statusRaw,
+                    orderTime: time,
+                    logistics: logistics,
+                    pickupCode: "",
+                    carrier: "",
+                    imageURL: image,
+                    goodsID: sku,
+                    updatedAt: Date()
+                ))
+            }
+        }
+
+        return out
     }
 
     private static func makeOrder(_ dict: [String: Any], platform: Platform) -> Order? {
