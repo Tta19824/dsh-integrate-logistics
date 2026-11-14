@@ -10,6 +10,7 @@ final class WebHandle: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var app = AppState()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         TabView {
@@ -20,7 +21,14 @@ struct ContentView: View {
                 .tabItem { Label("平台", systemImage: "person.crop.circle") }
         }
         .environmentObject(app)
-        .task { OrderClient.warmUp() }
+        .task {
+            OrderClient.warmUp()
+            // 首屏直接用库里的数据，后台默默补一次新的
+            app.autoRefreshIfStale()
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { app.autoRefreshIfStale(minutes: 5) }
+        }
         .sheet(item: $app.loginPlatform) { platform in
             LoginSheet(platform: platform)
                 .environmentObject(app)

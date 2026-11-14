@@ -77,7 +77,7 @@ final class AppState: ObservableObject {
                 }
                 reload()
                 busy = nil
-                show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)")
+                if !quiet { show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)") }
             } catch {
                 busy = nil
                 show("\(platform.name)：\(error.localizedDescription)")
@@ -120,7 +120,17 @@ final class AppState: ObservableObject {
         }
     }
 
-    func refreshAll() {
+    /// 打开 App / 回到前台时，如果数据已经旧了就在后台刷一次：
+    /// 用户看到的是「已经好的列表」，而不是等 7 秒的转圈。
+    func autoRefreshIfStale(minutes: Int = 3) {
+        guard busy == nil else { return }
+        let last = UserDefaults.standard.double(forKey: "last_refresh_at")
+        let age = Date().timeIntervalSince1970 - last
+        guard last == 0 || age > Double(minutes * 60) else { return }
+        refreshAll(quiet: true)
+    }
+
+    func refreshAll(quiet: Bool = false) {
         // 京东先断开：抓取路径还没跑通，留着会让每次刷新多花几十秒
         let platforms = Platform.allCases.filter { $0 != .jd && isLoggedIn($0) }
         guard !platforms.isEmpty else {
@@ -153,7 +163,8 @@ final class AppState: ObservableObject {
             lines.removeAll { $0.isEmpty }
             reload()
             busy = nil
-            show(lines.joined(separator: "；"))
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "last_refresh_at")
+            if !quiet { show(lines.joined(separator: "；")) }
             enrichTaobaoTrace()
         }
     }
