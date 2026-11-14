@@ -486,8 +486,8 @@ final class WebOrderFetcher: NSObject {
             clickTabs: false,
             strict: false,
             scroll: true,
-            slot: "detail-tb",
-            readyJS: "(document.querySelectorAll('.pc-node-wrapper').length >= 3) ? '1' : '0'"
+            readyJS: "(document.querySelectorAll('.pc-node-wrapper').length >= 3) ? '1' : '0'",
+            slot: "detail-tb"
         )
     }
 
