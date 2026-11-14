@@ -34,8 +34,9 @@ final class WebOrderFetcher: NSObject {
     /// 预热过的地址与时间：页面已加载好时，刷新可以直接省掉这一次导航
     private var warmURL: URL?
     private var warmAt: Date?
-    /// 复用同一个 WebView：省掉每次刷新重建 + 重新握手的时间
-    private var reusableWebView: WKWebView?
+    /// 按用途复用 WebView：拼多多列表、淘宝列表各自一个，刷新时两个平台可以并行跑，
+    /// 也不会互相把对方的页面顶掉。
+    private var slots: [String: WKWebView] = [:]
 
     /// 在页面里找 innerText 含指定文字、且**最短**的那个链接，返回它的 href。
     /// 订单卡片整体常常也被包在一个 <a> 里，取最短才能命中「查看物流」这种小链接。
@@ -275,7 +276,7 @@ final class WebOrderFetcher: NSObject {
 
     /// 启动预热：App 一打开就把订单页加载好，用户点刷新时页面已经是热页。
     func warmUp(url: URL, cookieHeader: String) async {
-        let wv = reusableWebView ?? makeWebView()
+        let wv = slots["pdd"] ?? makeWebView(slot: "pdd")
         webView = wv
         await prefillCookies(cookieHeader)
         var request = URLRequest(url: url)
@@ -289,8 +290,8 @@ final class WebOrderFetcher: NSObject {
     }
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
-    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true, minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil, readyJS: String? = nil) async throws -> Capture {
-        let wv = reusableWebView ?? makeWebView()
+    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true, minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil, readyJS: String? = nil, slot: String = "main") async throws -> Capture {
+        let wv = slots[slot] ?? makeWebView(slot: slot)
         webView = wv
         await prefillCookies(cookieHeader)
 
@@ -325,11 +326,14 @@ final class WebOrderFetcher: NSObject {
                     loaded = await waitForData(wv: wv, seconds: seconds, strict: strict)
                 }
                 if scroll {
-                    for _ in 0..<3 {
+                    let rounds = readyJS == nil ? 3 : 1
+                    for _ in 0..<rounds {
                         _ = try? await wv.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight)")
-                        try? await Task.sleep(nanoseconds: 900_000_000)
+                        try? await Task.sleep(nanoseconds: readyJS == nil ? 900_000_000 : 500_000_000)
                     }
-                    _ = await waitForData(wv: wv, seconds: max(2, seconds * 0.35), strict: strict)
+                    if readyJS == nil {
+                        _ = await waitForData(wv: wv, seconds: max(2, seconds * 0.35), strict: strict)
+                    }
                 }
                 if minWait > 0 {
                     let cost = Date().timeIntervalSince(startedAt)
@@ -447,7 +451,7 @@ final class WebOrderFetcher: NSObject {
         guard let url = URL(string: "https://mobile.pinduoduo.com/order.html?order_sn=\(encoded)") else {
             throw FetchError.badURL
         }
-        return try await capture(urls: [url], cookieHeader: cookieHeader, seconds: 14, clickTabs: false)
+        return try await capture(urls: [url], cookieHeader: cookieHeader, seconds: 14, clickTabs: false, slot: "detail-pdd")
     }
 
     /// 打开淘宝订单详情页，用来读快递公司、运单号和物流轨迹。
@@ -456,7 +460,7 @@ final class WebOrderFetcher: NSObject {
         guard let url = URL(string: "https://buyertrade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=\(encoded)") else {
             throw FetchError.badURL
         }
-        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 9, clickTabs: false, strict: false, followLink: "查看物流")
+        return try await capture(platform: .tb, urls: [url], cookieHeader: cookieHeader, seconds: 9, clickTabs: false, strict: false, followLink: "查看物流", slot: "detail-tb")
     }
 
     /// 淘宝 PC 的物流详情页（服务端渲染完整轨迹），作为「查看物流」跟丢时的备选。
@@ -482,6 +486,7 @@ final class WebOrderFetcher: NSObject {
             clickTabs: false,
             strict: false,
             scroll: true,
+            slot: "detail-tb",
             readyJS: "(document.querySelectorAll('.pc-node-wrapper').length >= 3) ? '1' : '0'"
         )
     }
@@ -491,7 +496,7 @@ final class WebOrderFetcher: NSObject {
         guard let url = URL(string: "https://mobile.pinduoduo.com/goods.html?goods_id=\(goodsID)") else {
             throw FetchError.badURL
         }
-        return try await capture(urls: [url], cookieHeader: cookieHeader, seconds: 12, clickTabs: false)
+        return try await capture(urls: [url], cookieHeader: cookieHeader, seconds: 12, clickTabs: false, slot: "detail-pdd")
     }
 
     private func isLoginPage(title: String, text: String) -> Bool {
@@ -614,7 +619,7 @@ final class WebOrderFetcher: NSObject {
         wv.alpha = 0.02
         wv.isUserInteractionEnabled = false
         attach(wv)
-        reusableWebView = wv
+        slots[slot] = wv
         return wv
     }
 

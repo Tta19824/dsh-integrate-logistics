@@ -129,19 +129,28 @@ final class AppState: ObservableObject {
         }
         guard busy == nil else { return }
         Task {
-            var lines: [String] = []
-            for platform in platforms {
-                busy = platform
-                do {
-                    let outcome = try await OrderClient.fetch(platform: platform)
-                    if !outcome.orders.isEmpty {
-                        OrderStore.shared.replace(platform: platform, with: outcome.orders)
+            busy = platforms.first
+            // 两个平台各自开一个 WebView 并行抓，总耗时取最大值而不是相加
+            let results = await withTaskGroup(of: (Platform, String).self) { group -> [(Platform, String)] in
+                for platform in platforms {
+                    group.addTask { @MainActor in
+                        do {
+                            let outcome = try await OrderClient.fetch(platform: platform)
+                            if !outcome.orders.isEmpty {
+                                OrderStore.shared.replace(platform: platform, with: outcome.orders)
+                            }
+                            return (platform, "\(platform.name)：\(outcome.note)")
+                        } catch {
+                            return (platform, "\(platform.name)：\(error.localizedDescription)")
+                        }
                     }
-                    lines.append("\(platform.name)：\(outcome.note)")
-                } catch {
-                    lines.append("\(platform.name)：\(error.localizedDescription)")
                 }
+                var out: [(Platform, String)] = []
+                for await item in group { out.append(item) }
+                return out
             }
+            var lines = platforms.map { p in results.first(where: { $0.0 == p })?.1 ?? "" }
+            lines.removeAll { $0.isEmpty }
             reload()
             busy = nil
             show(lines.joined(separator: "；"))

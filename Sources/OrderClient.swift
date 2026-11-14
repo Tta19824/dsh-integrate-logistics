@@ -136,7 +136,8 @@ enum OrderClient {
             urls: [
                 "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm"
             ],
-            seconds: 16
+            seconds: 20,
+            readyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 2 ? '1' : '0'"
         )
     }
 
@@ -153,7 +154,7 @@ enum OrderClient {
     }
 
     /// 淘宝 / 京东：都是前端渲染，用同一个 WebView 抓包路线，只是地址和解析器不同。
-    private static func fetchWebOrders(platform: Platform, cookie: String, urls: [String], seconds: Double) async throws -> FetchOutcome {
+    private static func fetchWebOrders(platform: Platform, cookie: String, urls: [String], seconds: Double, readyJS: String? = nil) async throws -> FetchOutcome {
         let started = Date()
         let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
@@ -188,10 +189,12 @@ enum OrderClient {
                 cookieHeader: cookie,
                 seconds: seconds,
                 clickTabs: false,
-                minWait: 10,
+                minWait: 0,
                 strict: true,
                 scroll: true,
-                userAgent: ua
+                userAgent: ua,
+                readyJS: readyJS,
+                slot: "list-\(platform.rawValue)"
             )
             tried.append(contentsOf: one.tried)
             let parsed = TaobaoJdParser.parse(platform: platform, text: one.text, payloadJSON: one.payloadJSON, html: one.html)
@@ -278,7 +281,7 @@ enum OrderClient {
 
         guard !candidates.isEmpty else { throw FetchError.badURL }
 
-        let capture = try await WebOrderFetcher.shared.capture(platform: .pdd, urls: candidates, cookieHeader: cookie, seconds: 15)
+        let capture = try await WebOrderFetcher.shared.capture(platform: .pdd, urls: candidates, cookieHeader: cookie, seconds: 15, slot: "pdd")
 
         // 平台会在打开页面时轮换登录 token，抓完把最新的写回钥匙串，下次就不用重新登录
         if !capture.cookieHeader.isEmpty, CookieStore.hasLogin(capture.cookieHeader, platform: .pdd),
