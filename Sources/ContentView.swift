@@ -63,6 +63,7 @@ struct LoginSheet: View {
     @State private var baseline: [String: String] = [:]
     @State private var started = Date()
     @State private var debugText = ""
+    @State private var liveBaseline: [String: String] = [:]
 
     var body: some View {
         NavigationStack {
@@ -126,24 +127,37 @@ struct LoginSheet: View {
 
     private func detectLogin() {
         guard !autoClosed else { return }
+        let pageURL = handle.view?.url?.absoluteString ?? ""
+        let onLoginPage = pageURL.contains("plogin") || pageURL.contains("passport") || pageURL.isEmpty
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
             let current = Dictionary(cookies.map { ($0.name, $0.value) }, uniquingKeysWith: { a, _ in a })
             let elapsed = Int(Date().timeIntervalSince(started))
-            let names = platform.essentialCookies
+
+                    debugText = "t=\(elapsed) 采样 " + snap.map { $0.key + "=" + String($0.value.prefix(6)) }.joined(separator: " ")
+            if liveBaseline.isEmpty {
+                var snap: [String: String] = [:]
+                for name in platform.essentialCookies {
+                    snap[name] = current[name] ?? ""
+                }
+                DispatchQueue.main.async {
+                    liveBaseline = snap
+                    debugText = "t=\(elapsed) 采样 \(snap.map { $0.key + "=" + String($0.value.prefix(6)) }.joined(separator: " "))"
+                }
+                return
+            }
+
             var parts: [String] = []
-            for name in names {
-                let v = current[name] ?? "-"
-                let b = baseline[name] ?? "-"
-                parts.append("\(name)=\(v.prefix(6))/\(b.prefix(6))")
+            var changed = true
+            for name in platform.essentialCookies {
+                let v = current[name] ?? ""
+                let snap = liveBaseline[name] ?? ""
+                parts.append("\(name)=\(v.prefix(6))")
+                if v.isEmpty || v == snap { changed = false }
             }
-            let msg = "t=\(elapsed) " + parts.joined(separator: " ") + " n=\(current.count)"
-            let hit = platform.essentialCookies.allSatisfy { name in
-                guard let v = current[name], !v.isEmpty else { return false }
-                return baseline[name] != v
-            }
+            let msg = "t=\(elapsed) " + parts.joined(separator: " ") + (onLoginPage ? " 登录页" : " 已跳出")
             DispatchQueue.main.async {
                 debugText = msg
-                guard hit, elapsed > 4, !autoClosed else { return }
+                guard changed, !onLoginPage, elapsed > 5, !autoClosed else { return }
                 autoClosed = true
                 app.finishLogin(platform)
                 app.toast = "\(platform.name)登录成功，凭证已自动保存"
