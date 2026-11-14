@@ -77,6 +77,8 @@ enum JdDirect {
             let message = jsonMessage(text)
             var line = "直连探测：HTTP \(code) · \(data.count) 字节 · 订单 \(orders) 条"
             if !message.isEmpty { line += " · \(message)" }
+            line += " · 发出 \(req.method) \(shortURL(req.url)) · 体 \(req.body?.count ?? 0) 字节"
+            line += " · 回应「\(preview(text))」"
             return line
         } catch {
             return "直连探测：失败 \(error.localizedDescription)"
@@ -88,6 +90,18 @@ enum JdDirect {
         if let body = req.body { dict["body"] = body }
         let data = (try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])) ?? Data()
         return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    private static func shortURL(_ raw: String) -> String {
+        guard let url = URL(string: raw) else { return raw }
+        var path = url.path
+        if path.count > 40 { path = String(path.suffix(40)) }
+        return (url.host ?? "?") + path
+    }
+
+    private static func preview(_ text: String) -> String {
+        let one = text.replacingOccurrences(of: "\\n", with: " ").replacingOccurrences(of: "\\r", with: " ")
+        return String(one.prefix(110))
     }
 
     private static func occurrences(of needle: String, in haystack: String) -> Int {

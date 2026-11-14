@@ -517,7 +517,8 @@ enum OrderClient {
             DebugFile(id: "tbdetail-\(platform.rawValue)", label: "\(platform.name) · 订单详情页", url: tbDetailFile(for: platform)),
             DebugFile(id: "resources-\(platform.rawValue)", label: "\(platform.name) · 资源地址", url: resourcesFile(for: platform)),
             DebugFile(id: "tblogihtml-\(platform.rawValue)", label: "\(platform.name) · 物流页源码", url: tbLogisticsHTMLFile(for: platform)),
-            DebugFile(id: "resourcesdetail-\(platform.rawValue)", label: "\(platform.name) · 详情页资源", url: resourcesDetailFile(for: platform))
+            DebugFile(id: "resourcesdetail-\(platform.rawValue)", label: "\(platform.name) · 详情页资源", url: resourcesDetailFile(for: platform)),
+            DebugFile(id: "jd-request", label: "京东 · 直连请求", url: JdDirect.requestFile())
         ]
     }
 }
