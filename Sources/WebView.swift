@@ -15,6 +15,36 @@ struct WebView: UIViewRepresentable {
     private static let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     private static let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
+
+    private static let jumpGuardScript = """
+    (function(){
+      try {
+        var rawOpen = window.open;
+        window.open = function(u){
+          var s = String(u || '');
+          if (s.indexOf('openapp') >= 0 || s.indexOf('jdmobile') >= 0) return null;
+          return rawOpen.apply(window, arguments);
+        };
+      } catch (e) {}
+      try {
+        document.addEventListener('click', function(ev){
+          var el = ev.target;
+          while (el && el !== document) {
+            if (el.tagName === 'A') {
+              var h = String(el.getAttribute('href') || '');
+              if (h.indexOf('openapp') >= 0 || h.indexOf('jdmobile') >= 0) {
+                ev.preventDefault();
+                ev.stopImmediatePropagation();
+                return false;
+              }
+            }
+            el = el.parentNode;
+          }
+        }, true);
+      } catch (e) {}
+    })();
+    """
+
     private static let qrTabScript = """
     (function(){
       var tries = 0;
@@ -55,6 +85,9 @@ struct WebView: UIViewRepresentable {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
         config.allowsInlineMediaPlayback = true
+        config.userContentController.addUserScript(
+            WKUserScript(source: Self.jumpGuardScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        )
         if autoQR {
             config.userContentController.addUserScript(
                 WKUserScript(source: Self.qrTabScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true)

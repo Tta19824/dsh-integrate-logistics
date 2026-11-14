@@ -87,7 +87,7 @@ struct LoginSheet: View {
                     }
                     baseline = dict
                 }
-                .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
+                .onReceive(Timer.publish(every: 0.6, on: .main, in: .common).autoconnect()) { _ in
                     detectLogin()
                 }
                 .onChange(of: loginScenePhase) { phase in
@@ -159,7 +159,7 @@ struct LoginSheet: View {
                 debugText = msg
                 let relaxed = (platform == .jd)
                 let urlOK = relaxed || !onLoginPage
-                guard changed, urlOK, elapsed > (relaxed ? 8 : 5), !autoClosed else { return }
+                guard changed, urlOK, elapsed > (relaxed ? 4 : 5), !autoClosed else { return }
                 autoClosed = true
                 app.finishLogin(platform)
                 app.toast = "\(platform.name)登录成功，凭证已自动保存"
