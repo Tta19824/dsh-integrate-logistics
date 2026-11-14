@@ -290,7 +290,8 @@ final class WebOrderFetcher: NSObject {
     }
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
-    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true, minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil, readyJS: String? = nil, slot: String = "main") async throws -> Capture {
+    func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true,
+        clickTexts: [String] = [], minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil, readyJS: String? = nil, slot: String = "main") async throws -> Capture {
         let wv = slots[slot] ?? makeWebView(slot: slot)
         webView = wv
         await prefillCookies(cookieHeader)
@@ -399,6 +400,15 @@ final class WebOrderFetcher: NSObject {
                 baseline = await self.entryCount(wv)
                 _ = try? await wv.evaluateJavaScript(self.clickTabJS(["待收货"]))
                 _ = await self.waitForNewOrderList(wv: wv, from: baseline, seconds: 3.0)
+            }
+
+            if !clickTexts.isEmpty {
+                for wanted in clickTexts {
+                    _ = try? await wv.evaluateJavaScript(self.clickTabJS([wanted]))
+                    try? await Task.sleep(nanoseconds: 2_200_000_000)
+                }
+                title = (try? await wv.evaluateJavaScript("document.title || ''")) as? String ?? title
+                text = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? text
             }
 
             let cards = (try? await wv.evaluateJavaScript(Self.cardsJS)) as? String ?? "[]"

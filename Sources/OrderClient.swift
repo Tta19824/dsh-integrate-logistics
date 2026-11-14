@@ -146,15 +146,16 @@ enum OrderClient {
             platform: .jd,
             cookie: cookie,
             urls: [
-                "https://order.jd.com/center/list.action"
+                "https://my.m.jd.com/index.html?sceneval=2"
             ],
-            seconds: 14,
+            seconds: 12,
+            clickTexts: ["全部订单"],
             readyJS: "(document.body.innerText.match(/订单号|订单编号/g) || []).length >= 1 ? '1' : '0'"
         )
     }
 
     /// 淘宝 / 京东：都是前端渲染，用同一个 WebView 抓包路线，只是地址和解析器不同。
-    private static func fetchWebOrders(platform: Platform, cookie: String, urls: [String], seconds: Double, readyJS: String? = nil) async throws -> FetchOutcome {
+    private static func fetchWebOrders(platform: Platform, cookie: String, urls: [String], seconds: Double, readyJS: String? = nil, clickTexts: [String] = []) async throws -> FetchOutcome {
         let started = Date()
         let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
@@ -202,6 +203,7 @@ enum OrderClient {
                 scroll: true,
                 userAgent: ua,
                 readyJS: readyJS,
+                clickTexts: clickTexts,
                 slot: "list-\(platform.rawValue)"
             )
             tried.append(contentsOf: one.tried)
