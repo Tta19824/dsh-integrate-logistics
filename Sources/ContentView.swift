@@ -60,6 +60,8 @@ struct LoginSheet: View {
     @StateObject private var handle = WebHandle()
     @State private var autoClosed = false
     @State private var baseline: [String: String] = [:]
+    @State private var started = Date()
+    @State private var debugText = ""
 
     var body: some View {
         NavigationStack {
@@ -85,6 +87,9 @@ struct LoginSheet: View {
                 }
                 .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
                     detectLogin()
+                }
+                .overlay(alignment: .bottom) {
+                    Text(debugText).font(.system(size: 10)).foregroundColor(.secondary).padding(4)
                 }
                 .ignoresSafeArea(edges: .bottom)
                 .navigationTitle("\(platform.name) 登录")
@@ -119,23 +124,25 @@ struct LoginSheet: View {
         guard !autoClosed else { return }
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
             let current = Dictionary(cookies.map { ($0.name, $0.value) }, uniquingKeysWith: { a, _ in a })
-            // 必须全部存在，而且不能还是进来之前那个旧值（否则等于「上次登录的残留」）
+            let elapsed = Int(Date().timeIntervalSince(started))
+            let key = current["pt_key"] ?? "-"
+            let base = baseline["pt_key"] ?? "-"
+            let jdCount = cookies.filter { $0.domain.contains("jd.com") }.count
+            let msg = "t=\(elapsed) key=\(key.prefix(6)) base=\(base.prefix(6)) jd=\(jdCount)"
             let hit = platform.essentialCookies.allSatisfy { name in
                 guard let v = current[name], !v.isEmpty else { return false }
                 return baseline[name] != v
             }
-            guard hit else { return }
             DispatchQueue.main.async {
-                guard !autoClosed else { return }
+                debugText = msg
+                guard hit, elapsed > 4, !autoClosed else { return }
                 autoClosed = true
                 app.finishLogin(platform)
-                app.toast = "\(platform.name)：登录成功，凭证已自动保存"
+                app.toast = "\(platform.name)登录成功，凭证已自动保存"
                 dismiss()
             }
         }
     }
-
-    // MARK: - 保存二维码 + 跳到拼多多扫一扫
 
     private func saveQRAndScan() {
         guard let wv = handle.view else {
