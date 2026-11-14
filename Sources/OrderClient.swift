@@ -149,8 +149,7 @@ enum OrderClient {
                 "https://my.m.jd.com/index.html?sceneval=2"
             ],
             seconds: 12,
-            clickTexts: ["全部订单"],
-            readyJS: "(document.body.innerText.match(/订单号|订单编号/g) || []).length >= 1 ? '1' : '0'"
+            clickTexts: ["全部订单"]
         )
     }
 
@@ -198,12 +197,12 @@ enum OrderClient {
                 cookieHeader: cookie,
                 seconds: seconds,
                 clickTabs: false,
+                clickTexts: clickTexts,
                 minWait: 0,
                 strict: true,
                 scroll: true,
                 userAgent: ua,
                 readyJS: readyJS,
-                clickTexts: clickTexts,
                 slot: "list-\(platform.rawValue)"
             )
             tried.append(contentsOf: one.tried)
