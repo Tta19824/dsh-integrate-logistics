@@ -88,6 +88,17 @@ struct LoginSheet: View {
                 .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
                     detectLogin()
                 }
+                .onChange(of: scenePhase) { phase in
+                    guard phase == .active else { return }
+                    detectLogin()
+                    guard platform == .jd, !autoClosed else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        guard !autoClosed, let wv = handle.view else { return }
+                        let list = URL(string: "https://order.jd.com/center/list.action")!
+                        if let cur = wv.url?.absoluteString, cur.contains("order.jd.com") { return }
+                        wv.load(URLRequest(url: list))
+                    }
+                }
                 .overlay(alignment: .bottom) {
                     Text(debugText).font(.system(size: 10)).foregroundColor(.secondary).padding(4)
                 }
