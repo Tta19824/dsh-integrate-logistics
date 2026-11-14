@@ -4,7 +4,21 @@ import UIKit
 struct PlatformsView: View {
     @EnvironmentObject private var app: AppState
 
+    @State private var jdProbe: String?
+    @State private var jdProbeLabel = ""
+
     private var capture: CaptureInfo { OrderClient.lastCapture }
+
+    /// 京东手机版可能的订单列表页，逐个试，看哪个真出「订单号」。
+    static let jdPages: [(name: String, url: String)] = [
+        ("order.m.jd.com/orderList/1", "https://order.m.jd.com/orderList/1"),
+        ("order.m.jd.com/orderList/1?sceneval=2", "https://order.m.jd.com/orderList/1?sceneval=2"),
+        ("wq.jd.com/order/orderlist", "https://wq.jd.com/order/orderlist?sceneval=2"),
+        ("home.m.jd.com/myOrders.action", "https://home.m.jd.com/myOrders/myOrders.action"),
+        ("m.jd.com/order/orderList.action", "https://m.jd.com/order/orderList.action"),
+        ("order.jd.com/center/list.action", "https://order.jd.com/center/list.action"),
+        ("my.m.jd.com 首页（已知落点）", "https://my.m.jd.com/index.html?sceneval=2")
+    ]
 
     var body: some View {
         NavigationStack {
@@ -67,6 +81,27 @@ struct PlatformsView: View {
                     Text("调试 · 轨迹库")
                 } footer: {
                     Text("刷新后这行会变。如果显示「轨迹库 0 行」，说明轨迹根本没写进数据库。")
+                }
+
+                Section {
+                    ForEach(Array(Self.jdPages.enumerated()), id: \.offset) { pair in
+                        Button {
+                            jdProbe = pair.element.url
+                            jdProbeLabel = "\(pair.offset + 1). \(pair.element.name)"
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(pair.offset + 1). \(pair.element.name)")
+                                Text(pair.element.url)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("调试 · 京东订单页")
+                } footer: {
+                    Text("挨个点开，看哪一页顶部显示「订单号 ×N」大于 0 —— 那就是真正的订单列表页，把编号告诉我。")
                 }
 
                 if let tb = app.orders.first(where: { $0.platform == .tb }) {
@@ -181,6 +216,14 @@ struct PlatformsView: View {
                 }
             }
             .navigationTitle("平台")
+            .sheet(isPresented: Binding(
+                get: { jdProbe != nil },
+                set: { if !$0 { jdProbe = nil } }
+            )) {
+                if let url = jdProbe {
+                    JdProbeSheet(startURL: url, label: jdProbeLabel)
+                }
+            }
         }
     }
 
