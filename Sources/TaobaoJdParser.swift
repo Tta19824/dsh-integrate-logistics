@@ -20,6 +20,17 @@ enum TaobaoJdParser {
     private static let jdImageKeys = ["imageUrl", "imgUrl", "skuImage", "wareImage", "logo"]
     private static let jdTimeKeys = ["orderTime", "createTime", "orderDate", "submitTime"]
 
+    /// 京东的状态词（PC 列表页文字里的写法）
+    static let jdStatuses: [String: OrderStatus] = [
+        "等待付款": .unpaid, "待付款": .unpaid,
+        "等待发货": .paid, "待发货": .paid, "商家正在备货": .paid,
+        "等待收货": .shipped, "待收货": .shipped, "已发货": .shipped,
+        "运输中": .shipped, "派送中": .shipped, "已送达": .shipped,
+        "已完成": .completed, "交易完成": .completed, "已收货": .completed,
+        "已取消": .cancelled, "交易关闭": .cancelled,
+        "退款中": .refunding, "退款完成": .refunding
+    ]
+
     static func parse(platform: Platform, text: String, payloadJSON: String, html: String = "") -> [Order] {
         // 淘宝电脑版订单页的订单数据在 mtop.taobao.order.queryboughtlistv2 里，字段最全，优先用
         if platform == .tb {
@@ -580,8 +591,9 @@ enum TaobaoJdParser {
             }
 
             // 状态
+            let table = platform == .tb ? tbStatuses : jdStatuses
             var statusRaw = ""
-            for line in block where tbStatuses[line] != nil {
+            for line in block where table[line] != nil {
                 statusRaw = line
                 break
             }
@@ -604,7 +616,10 @@ enum TaobaoJdParser {
             // 金额：实付款￥x → 合计￥x → 最后一个 ￥x
             var amount = ""
             let joined = block.joined(separator: " ")
-            for key in ["实付款￥", "实付款¥", "合计￥", "合计¥"] {
+            let moneyKeys = platform == .tb
+                ? ["实付款￥", "实付款¥", "合计￥", "合计¥"]
+                : ["实付款￥", "实付款¥", "在线支付￥", "在线支付¥", "应付￥", "应付¥", "合计￥", "合计¥"]
+            for key in moneyKeys {
                 if let range = joined.range(of: key) {
                     let rest = joined[range.upperBound...]
                     let number = rest.prefix(while: { $0.isNumber || $0 == "." })

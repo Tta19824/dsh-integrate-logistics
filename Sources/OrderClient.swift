@@ -146,10 +146,12 @@ enum OrderClient {
             platform: .jd,
             cookie: cookie,
             urls: [
+                "https://order.jd.com/center/list.action",
                 "https://home.m.jd.com/myOrders/myOrders.action",
                 "https://m.jd.com/order/orderList.action"
             ],
-            seconds: 22
+            seconds: 20,
+            readyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
         )
     }
 
@@ -168,6 +170,14 @@ enum OrderClient {
                 plan.append((url, mobileUA))
             }
             for url in urls where !(url.contains("buyertrade") || url.contains("trade/itemlist")) {
+                plan.append((url, mobileUA))
+            }
+        } else if platform == .jd {
+            for url in urls where url.contains("order.jd.com") {
+                plan.append((url, desktopUA))
+                plan.append((url, mobileUA))
+            }
+            for url in urls where !url.contains("order.jd.com") {
                 plan.append((url, mobileUA))
             }
         } else {
