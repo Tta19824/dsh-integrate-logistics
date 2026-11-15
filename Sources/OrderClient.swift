@@ -324,13 +324,21 @@ enum OrderClient {
         let started = Date()
 
         // 快路：之前已经抓到过 order_list 请求，直接重放，不用开 WebView
-        if !cookie.isEmpty, let saved = PddFast.load() {
-            if let result = await PddFast.replay(saved, cookie: cookie), result.status == 200,
-               result.text.contains("order_sn") {
+        var fastNote = ""
+        if cookie.isEmpty {
+            fastNote = "快路：没有 cookie"
+        } else if let saved = PddFast.load() {
+            if let result = await PddFast.replay(saved, cookie: cookie) {
+                if result.status != 200 {
+                    fastNote = "快路：重放 HTTP \(result.status)"
+                } else if !result.text.contains("order_sn") {
+                    fastNote = "快路：重放 \(result.text.count) 字节但没有 order_sn"
+                }
                 let payload = PddFast.payloadJSON(url: saved.url, body: result.text)
                 var fastOrders = attachLogistics(PinduoduoParser.parse(text: "", payloadJSON: payload), payloadJSON: payload)
                 // 只回放回来已完成的单（说明存的不是“待收货”那一页）时，当作失败，回退 WebView
                 let hasActive = fastOrders.contains { $0.status == .paid || $0.status == .shipped }
+                if !hasActive { fastNote = "快路：重放 \(fastOrders.count) 条但都不是待发货/待收货" }
                 if !fastOrders.isEmpty && hasActive {
                     fastOrders = await enrichShipping(fastOrders, cookie: cookie)
                     _ = self.write(payload, to: self.payloadFile(for: .pdd))
@@ -413,11 +421,14 @@ enum OrderClient {
         _ = PddFast.save(fromPayload: capture.payloadJSON)
 
         let pickupCount = orders.filter { !$0.pickupCode.isEmpty }.count
-        var note = info.entryCount > 0
+        var note: String
+        if !fastNote.isEmpty { fastNote = "；" + fastNote }
+        note = info.entryCount > 0
             ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单，取件码 \(pickupCount) 单"
             : "没抓到接口响应，页面文本 \(info.textChars) 字"
         if orders.isEmpty, !info.snippet.isEmpty { note += "；页面开头：\(info.snippet.prefix(60))" }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
+        note += fastNote
         note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
 
         return FetchOutcome(

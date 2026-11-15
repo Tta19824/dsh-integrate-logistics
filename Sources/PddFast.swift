@@ -51,6 +51,14 @@ enum PddFast {
         return try? JSONDecoder().decode(Saved.self, from: data)
     }
 
+    /// 给调试区看的一句话
+    static func statusText() -> String {
+        guard let saved = load() else { return "无存档" }
+        let minutes = Int((Date().timeIntervalSince1970 - saved.savedAt) / 60)
+        let host = URL(string: saved.url)?.host ?? "?"
+        return "有存档 · \(host) · 体 \(saved.body.count) 字节 · \(minutes) 分钟前"
+    }
+
     static func clear() {
         try? FileManager.default.removeItem(at: file())
     }

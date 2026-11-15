@@ -84,6 +84,22 @@ struct PlatformsView: View {
                 }
 
                 Section {
+                    Text(PddFast.statusText())
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button("清除直连存档") {
+                        PddFast.clear()
+                        app.toast = "已清除，下次刷新会重新抓一份"
+                    }
+                    .font(.caption)
+                } header: {
+                    Text("调试 · 拼多多直连")
+                } footer: {
+                    Text("有存档时刷新会直接重放请求，不开网页；显示「无存档」说明还没存下来。")
+                }
+
+                Section {
                     ForEach(Array(Self.jdPages.enumerated()), id: \.offset) { pair in
                         Button {
                             jdProbe = pair.element.url
