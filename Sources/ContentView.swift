@@ -66,6 +66,7 @@ struct LoginSheet: View {
     @State private var started = Date()
     @State private var debugText = ""
     @State private var liveBaseline: [String: String] = [:]
+    @State private var pendingAt: Date?
 
     var body: some View {
         NavigationStack {
@@ -159,13 +160,24 @@ struct LoginSheet: View {
             let msg = "t=\(elapsed) " + parts.joined(separator: " ") + (onLoginPage ? " 登录页" : " 已跳出")
             DispatchQueue.main.async {
                 debugText = msg
-                let relaxed = (platform == .jd)
-                let urlOK = relaxed || !onLoginPage
-                guard changed, urlOK, elapsed > (relaxed ? 4 : 5), !autoClosed else { return }
-                autoClosed = true
-                app.finishLogin(platform)
-                app.toast = "\(platform.name)登录成功，凭证已自动保存"
-                dismiss()
+                // 京东登录后还有一次跳转（passport → www.jd.com），会把最终 cookie 覆盖上去。
+                // 所以不能在"cookie 变了"的瞬间就关窗，必须等页面离开登录页、并稳定 3 秒。
+                let stable = changed && !onLoginPage && elapsed > 5
+                if !stable {
+                    pendingAt = nil
+                    return
+                }
+                guard !autoClosed else { return }
+                if let since = pendingAt {
+                    if Date().timeIntervalSince(since) >= 3 {
+                        autoClosed = true
+                        app.finishLogin(platform)
+                        app.toast = "\(platform.name)登录成功，凭证已自动保存"
+                        dismiss()
+                    }
+                } else {
+                    pendingAt = Date()
+                }
             }
         }
     }
