@@ -186,12 +186,13 @@ enum OrderClient {
                 "https://my.m.jd.com/index.html?sceneval=2"
             ],
             seconds: 12,
-            clickTexts: ["全部订单"]
+            clickTexts: ["全部订单"],
+            clickReadyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
         )
     }
 
     /// 淘宝 / 京东：都是前端渲染，用同一个 WebView 抓包路线，只是地址和解析器不同。
-    private static func fetchWebOrders(platform: Platform, cookie: String, urls: [String], seconds: Double, readyJS: String? = nil, clickTexts: [String] = []) async throws -> FetchOutcome {
+    private static func fetchWebOrders(platform: Platform, cookie: String, urls: [String], seconds: Double, readyJS: String? = nil, clickTexts: [String] = [], clickReadyJS: String? = nil) async throws -> FetchOutcome {
         let started = Date()
         let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
@@ -235,6 +236,7 @@ enum OrderClient {
                 seconds: seconds,
                 clickTabs: false,
                 clickTexts: clickTexts,
+                clickReadyJS: clickReadyJS,
                 minWait: 0,
                 strict: true,
                 scroll: true,
@@ -307,6 +309,9 @@ enum OrderClient {
             note += "；页面开头：\(info.snippet.prefix(50))"
         }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
+        if platform == .pdd, !capture.payloadJSON.isEmpty {
+            note += "；" + await PddDirect.probe(payloadJSON: capture.payloadJSON, cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader)
+        }
         note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
 
         return FetchOutcome(
@@ -389,6 +394,11 @@ enum OrderClient {
         if orders.isEmpty, !info.snippet.isEmpty { note += "；页面开头：\(info.snippet.prefix(60))" }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
         note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
+
+        // 直连实验：把刚抓到的 order_list 请求原样重放，看服务端认不认
+        if !capture.payloadJSON.isEmpty {
+            note += "；" + await PddDirect.probe(payloadJSON: capture.payloadJSON, cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader)
+        }
 
         return FetchOutcome(
             orders: orders,

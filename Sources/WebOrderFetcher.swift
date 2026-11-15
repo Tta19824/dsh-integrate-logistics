@@ -332,7 +332,7 @@ final class WebOrderFetcher: NSObject {
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
     func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true,
-        clickTexts: [String] = [], minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil, readyJS: String? = nil, slot: String = "main", referer: String? = nil) async throws -> Capture {
+        clickTexts: [String] = [], minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil, readyJS: String? = nil, slot: String = "main", referer: String? = nil, clickReadyJS: String? = nil) async throws -> Capture {
         let wv = slots[slot] ?? makeWebView(slot: slot)
         webView = wv
         await prefillCookies(cookieHeader)
@@ -449,7 +449,17 @@ final class WebOrderFetcher: NSObject {
             if !clickTexts.isEmpty {
                 for wanted in clickTexts {
                     _ = try? await wv.evaluateJavaScript(self.clickTabJS([wanted]))
-                    try? await Task.sleep(nanoseconds: 2_200_000_000)
+                    if let clickReadyJS {
+                        var ready = false
+                        for _ in 0..<24 {
+                            let flag = (try? await wv.evaluateJavaScript(clickReadyJS)) as? String ?? "0"
+                            if flag == "1" { ready = true; break }
+                            try? await Task.sleep(nanoseconds: 250_000_000)
+                        }
+                        if !ready { try? await Task.sleep(nanoseconds: 600_000_000) }
+                    } else {
+                        try? await Task.sleep(nanoseconds: 2_200_000_000)
+                    }
                 }
                 title = (try? await wv.evaluateJavaScript("document.title || ''")) as? String ?? title
                 text = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? text
