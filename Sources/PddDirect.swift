@@ -16,10 +16,11 @@ enum PddDirect {
             return nil
         }
         for entry in entries {
-            guard let body = entry["b"] as? String, body.contains("order_list"),
-                  let raw = entry["r"] as? [String: Any] else { continue }
+            // 注意：order_list 出现在 **URL** 里，不在请求体里。
+            // 之前拿请求体匹配，所以「含 order_list 0 条」但 URL 列表里明明有两条。
+            guard let raw = entry["r"] as? [String: Any] else { continue }
             let url = (raw["u"] as? String) ?? (entry["u"] as? String) ?? ""
-            guard !url.isEmpty else { continue }
+            guard !url.isEmpty, url.contains("order_list") else { continue }
             var headers: [String: String] = [:]
             if let h = raw["h"] as? [String: Any] {
                 for (k, v) in h { headers[k] = String(describing: v) }
@@ -85,14 +86,15 @@ enum PddDirect {
         var urls: [String] = []
         for entry in entries {
             let body = (entry["b"] as? String) ?? ""
-            if body.contains("order_list") { withOrderList += 1 }
+            let url = (entry["u"] as? String) ?? ""
+            if url.contains("order_list") { withOrderList += 1 }
             if entry["r"] != nil { withReq += 1 }
             if let u = entry["u"] as? String, !u.isEmpty { urls.append(hostPath(u)) }
         }
         var heads: [String] = []
         for entry in entries {
-            let body = (entry["b"] as? String) ?? ""
-            if body.contains("order_list") {
+            let u = (entry["u"] as? String) ?? ""
+            if u.contains("order_list") {
                 if let raw = entry["r"] as? [String: Any] {
                     heads.append("有 r，键：" + raw.keys.sorted().joined(separator: "/"))
                 } else {
@@ -110,7 +112,8 @@ enum PddDirect {
     private static func hostPath(_ raw: String) -> String {
         guard let url = URL(string: raw) else { return raw }
         var path = url.path
-        if path.count > 34 { path = String(path.suffix(34)) }
+        if path.count > 40 { path = String(path.suffix(40)) }
+        if !path.hasPrefix("/") { path = "/" + path }
         return (url.host ?? "?") + path
     }
 
