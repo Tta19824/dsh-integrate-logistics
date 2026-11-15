@@ -304,6 +304,10 @@ enum OrderClient {
 
         guard let capture else { throw FetchError.badURL }
 
+        if platform == .jd, capture.title.contains("验证") || capture.text.contains("验证一下，购物无忧") || capture.text.contains("请完成验证") {
+            throw FetchError.note("京东要人机验证了：在「平台」页点「京东」打开网页，手动把验证滑过去，再回来刷新。")
+        }
+
         if !capture.cookieHeader.isEmpty, capture.cookieHeader != cookie,
            CookieStore.hasLogin(capture.cookieHeader, platform: platform) {
             CookieStore.save(capture.cookieHeader, for: platform)

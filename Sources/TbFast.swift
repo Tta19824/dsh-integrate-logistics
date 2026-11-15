@@ -96,7 +96,7 @@ enum TbFast {
             }
             var result = Result()
             result.orders = orders
-            result.note = String(format: "淘宝直连 %d 条订单 · 用时 %.1f 秒", orders.count, Date().timeIntervalSince(started))
+            result.note = "淘宝直连 \(orders.count) 条订单"
             try? body.data(using: .utf8)?.write(to: OrderClient.payloadFile(for: .tb), options: .atomic)
             return result
         } catch {
