@@ -32,7 +32,7 @@ struct OrdersView: View {
                     }
                 }
             }
-            .sheet(item: $selected) { order in
+            .sheet(item: $selected, onDismiss: { app.reload() }) { order in
                 LogisticsSheet(order: order)
             }
             .refreshable { app.refreshAll() }
