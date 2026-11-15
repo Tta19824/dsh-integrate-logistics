@@ -87,7 +87,7 @@ final class AppState: ObservableObject {
         Task {
             do {
                 let outcome = try await OrderClient.fetch(platform: platform)
-                if !outcome.orders.isEmpty {
+                if !outcome.orders.isEmpty || outcome.authoritative {
                     OrderStore.shared.replace(platform: platform, with: outcome.orders)
                 }
                 reload()
@@ -206,7 +206,7 @@ extension AppState {
             defer { self.jdBusy = false }
             do {
                 let outcome = try await OrderClient.fetch(platform: platform)
-                if !outcome.orders.isEmpty {
+                if !outcome.orders.isEmpty || outcome.authoritative {
                     OrderStore.shared.replace(platform: platform, with: outcome.orders)
                 }
                 self.reload()

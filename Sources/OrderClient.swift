@@ -7,6 +7,8 @@ struct FetchOutcome {
     var rawFileURL: URL?
     var note: String
     var payloadJSON: String = ""
+    /// 这次抓取是可信的（直连拿到了真实响应），0 条也该覆盖旧数据
+    var authoritative: Bool = false
 }
 
 enum FetchError: LocalizedError {
@@ -444,6 +446,13 @@ enum OrderClient {
         )
     }
 
+    /// 判断一段响应是不是「订单列表 JSON」（不在里面找 order_sn，因为空列表也是合法结果）
+    private static func fastOk(_ text: String) -> Bool {
+        guard let data = text.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return obj["orders"] is [Any]
+    }
+
     private static func fetchPinduoduo(cookie: String) async throws -> FetchOutcome {
         let started = Date()
 
@@ -467,19 +476,21 @@ enum OrderClient {
                         continue
                     }
                     _ = self.write(result.text, to: PddFast.responseFile())
-                    if !result.text.contains("order_sn") {
-                        fastNote = "快路：第 \(index + 1) 份重放 \(result.text.count) 字节但没有 order_sn"
+                    if result.text.contains("harmony_empty_height_and_back_refresh") {
+                        // 这是页面用来「确认有没有新数据」的探针请求，永远返回空，跳过
+                        fastNote = "快路：第 \(index + 1) 份是探针请求"
+                        continue
+                    }
+                    guard fastOk(result.text) else {
+                        fastNote = "快路：第 \(index + 1) 份重放 \(result.text.count) 字节但不是订单 JSON"
                         continue
                     }
                     let payload = PddFast.payloadJSON(url: saved.url, body: result.text)
                     var fastOrders = attachLogistics(PinduoduoParser.parse(text: "", payloadJSON: payload), payloadJSON: payload)
-                    if fastOrders.isEmpty {
-                        let head = result.text.prefix(50).replacingOccurrences(of: "\n", with: " ")
-                        fastNote = "快路：第 \(index + 1) 份重放 \(result.text.count) 字节 · 解析 0 条 · 开头「\(head)」"
-                        continue
-                    }
+                    // 0 条也算有效结果（比如东西全取完了，确实没有进行中的订单），
+                    // 否则「取完快递」之后每次刷新都会掉回 WebView 的 7 秒。
                     let hasActive = fastOrders.contains { $0.status == .paid || $0.status == .shipped }
-                    if !hasActive {
+                    if !fastOrders.isEmpty && !hasActive {
                         fastNote = "快路：第 \(index + 1) 份返回 \(fastOrders.count) 条但都不是待发货/待收货"
                         continue
                     }
@@ -494,7 +505,9 @@ enum OrderClient {
                         httpStatus: 200,
                         byteCount: result.text.count,
                         rawFileURL: self.payloadFile(for: .pdd),
-                        note: note
+                        note: note,
+                        payloadJSON: payload,
+                        authoritative: true
                     )
                 }
             }
