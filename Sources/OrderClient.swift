@@ -177,7 +177,24 @@ enum OrderClient {
     }
 
     private static func fetchTaobao(cookie: String) async throws -> FetchOutcome {
-        try await fetchWebOrders(
+        let started = Date()
+        // 快路：PC 订单页是按登录态 SSR 的，带 cookie 直接请求就有订单，不用开 WebView。
+        if !cookie.isEmpty, let html = await TaobaoListHTML.rawHTML(cookieHeader: cookie) {
+            try? html.data(using: .utf8)?.write(to: htmlFile(for: .tb), options: .atomic)
+            let text = HTMLTools.strip(html)
+            let direct = TaobaoJdParser.parsePcText(platform: .tb, text: text)
+            if !direct.isEmpty {
+                let note = String(format: "直连HTML %d 条订单 · 用时 %.1f 秒", direct.count, Date().timeIntervalSince(started))
+                return FetchOutcome(
+                    orders: direct,
+                    httpStatus: 200,
+                    byteCount: html.count,
+                    rawFileURL: htmlFile(for: .tb),
+                    note: note
+                )
+            }
+        }
+        return try await fetchWebOrders(
             platform: .tb,
             cookie: cookie,
             urls: [
