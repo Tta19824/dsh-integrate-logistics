@@ -101,18 +101,34 @@ enum OrderClient {
 
     /// 淘宝订单详情页的页面文字（排查快递公司与轨迹用）
     static func captureJdDetail(orderNo: String, cookieHeader: String) async throws -> WebOrderFetcher.Capture {
-        let raw = "https://trade.m.jd.com/order/n_detail_jdm.shtml?deal_id=\(orderNo)"
-        guard let url = URL(string: raw) else { throw FetchError.badURL }
-        return try await WebOrderFetcher.shared.capture(
-            platform: .jd,
-            urls: [url],
-            cookieHeader: cookieHeader,
-            seconds: 14,
-            clickTabs: false,
-            scroll: true,
-            readyJS: "(/运输中|已签收|派送中|已送达|运单号|承运人/.test(document.body.innerText)) ? '1' : '0'",
-            slot: "detail-jd"
-        )
+        let urls = [
+            "https://trade.m.jd.com/order/n_detail_jdm.shtml?deal_id=\(orderNo)",
+            "https://order.m.jd.com/orderDetail?orderId=\(orderNo)"
+        ].compactMap { URL(string: $0) }
+        guard !urls.isEmpty else { throw FetchError.badURL }
+
+        var best: WebOrderFetcher.Capture?
+        for (index, url) in urls.enumerated() {
+            guard let cap = try? await WebOrderFetcher.shared.capture(
+                platform: .jd,
+                urls: [url],
+                cookieHeader: cookieHeader,
+                seconds: 12,
+                clickTabs: false,
+                scroll: true,
+                readyJS: "(/运输中|已签收|派送中|已送达|运单号|承运人/.test(document.body.innerText)) ? '1' : '0'",
+                slot: "detail-jd",
+                referer: "https://my.m.jd.com/"
+            ) else { continue }
+            // 京东风控页：「验证一下，购物无忧」，只有几十个字，换下一个地址
+            let blocked = cap.text.count < 300 && (cap.text.contains("快速验证") || cap.text.contains("验证一下"))
+            if blocked { continue }
+            if best == nil || cap.text.count > (best?.text.count ?? 0) { best = cap }
+            if cap.text.count > 600 { break }
+            _ = index
+        }
+        guard let result = best else { throw FetchError.note("京东详情页被风控拦了（出现验证页），先手动打开一次京东再试") }
+        return result
     }
 
     static func jdDetailFile(for platform: Platform) -> URL {

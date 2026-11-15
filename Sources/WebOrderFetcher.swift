@@ -332,7 +332,7 @@ final class WebOrderFetcher: NSObject {
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
     func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true,
-        clickTexts: [String] = [], minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil, readyJS: String? = nil, slot: String = "main") async throws -> Capture {
+        clickTexts: [String] = [], minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil, readyJS: String? = nil, slot: String = "main", referer: String? = nil) async throws -> Capture {
         let wv = slots[slot] ?? makeWebView(slot: slot)
         webView = wv
         await prefillCookies(cookieHeader)
@@ -348,6 +348,9 @@ final class WebOrderFetcher: NSObject {
                 userAgent ?? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
                 forHTTPHeaderField: "User-Agent"
             )
+            if let referer, !referer.isEmpty {
+                request.setValue(referer, forHTTPHeaderField: "Referer")
+            }
 
             var loaded = true
             if warmURL == url, let at = warmAt, Date().timeIntervalSince(at) < 180 {
