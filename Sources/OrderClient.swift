@@ -89,6 +89,11 @@ enum OrderClient {
         rawDirectory().appendingPathComponent("tb_requests.json")
     }
 
+    /// 淘宝列表页这次发出的 mtop 请求（URL + 请求体 + 响应），用来做直连重放
+    static func tbListRequestsFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("tb_list_requests.json")
+    }
+
     /// 用 URLSession 直接抓回来的订单列表页 HTML
     static func tbListRawFile(for platform: Platform) -> URL {
         rawDirectory().appendingPathComponent("tb_list_raw_" + platform.rawValue + ".html")
@@ -321,6 +326,10 @@ enum OrderClient {
 
         let pageErr = write(capture.text, to: pageFile(for: platform))
         let payloadErr = write(capture.payloadJSON, to: payloadFile(for: platform))
+        if platform == .tb {
+            let reqs = TaobaoJdParser.extractMtopRequests(payloadJSON: capture.payloadJSON)
+            _ = write(reqs, to: tbListRequestsFile(for: .tb))
+        }
         let htmlErr = write(capture.html, to: htmlFile(for: platform))
         let digestErr = write(capture.digest, to: digestFile(for: platform))
         info.writeError = [pageErr, payloadErr, htmlErr, digestErr].compactMap { $0 }.joined(separator: " / ")
@@ -660,6 +669,7 @@ enum OrderClient {
             DebugFile(id: "resources-\(platform.rawValue)", label: "\(platform.name) · 资源地址", url: resourcesFile(for: platform)),
             DebugFile(id: "tblogihtml-\(platform.rawValue)", label: "\(platform.name) · 物流页源码", url: tbLogisticsHTMLFile(for: platform)),
             DebugFile(id: "tbrequests", label: "淘宝 · 物流请求", url: tbRequestsFile(for: platform)),
+            DebugFile(id: "tblistreq", label: "淘宝 · 列表请求", url: tbListRequestsFile(for: platform)),
             DebugFile(id: "tbrawhtml", label: "淘宝 · 直连HTML", url: tbRawHTMLFile(for: platform)),
             DebugFile(id: "tblistraw", label: "淘宝 · 列表直连HTML", url: tbListRawFile(for: platform)),
             DebugFile(id: "resourcesdetail-\(platform.rawValue)", label: "\(platform.name) · 详情页资源", url: resourcesDetailFile(for: platform)),
