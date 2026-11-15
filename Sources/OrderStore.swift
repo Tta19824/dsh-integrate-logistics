@@ -47,6 +47,7 @@ final class OrderStore {
         sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN goods_id TEXT;", nil, nil, nil)
         sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN carrier TEXT;", nil, nil, nil)
         sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS trace_summary (order_no TEXT PRIMARY KEY, text TEXT, updated REAL);", nil, nil, nil)
+        sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS pickup_cache (order_no TEXT PRIMARY KEY, code TEXT, updated REAL);", nil, nil, nil)
         sqlite3_exec(db, "DELETE FROM trace_summary WHERE order_no IS NULL OR order_no = '' OR text IS NULL OR text = '';", nil, nil, nil)
         if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
             NSLog("[store] create table failed: \(String(cString: sqlite3_errmsg(db)))")
@@ -68,6 +69,11 @@ final class OrderStore {
             sqlite3_exec(db, """
                 UPDATE orders SET logistics = (SELECT text FROM trace_summary t WHERE t.order_no = orders.order_no)
                 WHERE EXISTS (SELECT 1 FROM trace_summary t WHERE t.order_no = orders.order_no);
+                """, nil, nil, nil)
+            sqlite3_exec(db, """
+                UPDATE orders SET pickup_code = (SELECT code FROM pickup_cache p WHERE p.order_no = orders.order_no)
+                WHERE (pickup_code IS NULL OR pickup_code = '')
+                  AND EXISTS (SELECT 1 FROM pickup_cache p WHERE p.order_no = orders.order_no);
                 """, nil, nil, nil)
         }
     }
@@ -118,6 +124,16 @@ final class OrderStore {
                 sqlite3_step(stmt)
             }
             sqlite3_finalize(stmt)
+            // 再存一份到缓存表：刷新会整平台 DELETE 重写，orders.pickup_code 会被清掉
+            var cstmt: OpaquePointer?
+            let csql = "INSERT INTO pickup_cache (order_no, code, updated) VALUES (?, ?, ?) ON CONFLICT(order_no) DO UPDATE SET code = excluded.code, updated = excluded.updated;"
+            if sqlite3_prepare_v2(db, csql, -1, &cstmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(cstmt, 1, orderNo, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(cstmt, 2, code, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_double(cstmt, 3, Date().timeIntervalSince1970)
+                sqlite3_step(cstmt)
+            }
+            sqlite3_finalize(cstmt)
         }
     }
 
