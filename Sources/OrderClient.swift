@@ -334,8 +334,14 @@ enum OrderClient {
                 } else if !result.text.contains("order_sn") {
                     fastNote = "快路：重放 \(result.text.count) 字节但没有 order_sn"
                 }
+                // 把这次重放的原文存下来，解析不出来时可以直接看
+                _ = self.write(result.text, to: PddFast.responseFile())
                 let payload = PddFast.payloadJSON(url: saved.url, body: result.text)
                 var fastOrders = attachLogistics(PinduoduoParser.parse(text: "", payloadJSON: payload), payloadJSON: payload)
+                if fastOrders.isEmpty {
+                    let head = result.text.prefix(50).replacingOccurrences(of: "\n", with: " ")
+                    fastNote = "快路：重放 \(result.text.count) 字节 · 解析 0 条 · 开头「\(head)」"
+                }
                 // 只回放回来已完成的单（说明存的不是“待收货”那一页）时，当作失败，回退 WebView
                 let hasActive = fastOrders.contains { $0.status == .paid || $0.status == .shipped }
                 if !hasActive { fastNote = "快路：重放 \(fastOrders.count) 条但都不是待发货/待收货" }
@@ -593,6 +599,7 @@ enum OrderClient {
             DebugFile(id: "tblogihtml-\(platform.rawValue)", label: "\(platform.name) · 物流页源码", url: tbLogisticsHTMLFile(for: platform)),
             DebugFile(id: "resourcesdetail-\(platform.rawValue)", label: "\(platform.name) · 详情页资源", url: resourcesDetailFile(for: platform)),
             DebugFile(id: "jd-request", label: "京东 · 直连请求", url: JdDirect.requestFile()),
+            DebugFile(id: "pdd-fast", label: "拼多多 · 直连响应", url: PddFast.responseFile()),
             DebugFile(id: "jddetail", label: "京东 · 订单详情页", url: jdDetailFile(for: platform))
         ]
     }

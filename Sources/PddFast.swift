@@ -51,6 +51,11 @@ enum PddFast {
         return try? JSONDecoder().decode(Saved.self, from: data)
     }
 
+    static func responseFile() -> URL {
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return dir.appendingPathComponent("pdd_fast_response.json")
+    }
+
     /// 给调试区看的一句话
     static func statusText() -> String {
         guard let saved = load() else { return "无存档" }
