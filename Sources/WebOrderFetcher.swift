@@ -374,31 +374,45 @@ final class WebOrderFetcher: NSObject {
     func inPageReplay(slot: String, urlContains: String) async -> String {
         guard let wv = slots[slot] else { return "NOPAGE" }
         guard wv.url != nil else { return "NOURL" }
-        let js = """
-        var key = args.key;
-        var caps = window.__dshCap || [];
-        for (var i = caps.length - 1; i >= 0; i--) {
-            var e = caps[i] || {};
-            var u = String(e.u || '');
-            var r = e.r || null;
-            if (u.indexOf(key) < 0) continue;
-            if (!r) continue;
-            var opt = { credentials: 'include', method: r.m || 'POST' };
-            if (r.h) opt.headers = r.h;
-            if (r.d) opt.body = r.d;
-            return fetch(u, opt).then(function (resp) {
-                return resp.text().then(function (t) { return String(resp.status) + '|' + t; });
-            }).catch(function (err) { return 'ERR ' + err.message; });
-        }
-        return 'NONE';
+        // 页面里发起请求，把结果先写进 window.__dshReplay，避免 callAsyncJavaScript 的返回值类型问题
+        let kick = """
+        window.__dshReplay = '';
+        (function () {
+            var key = KEY;
+            var caps = window.__dshCap || [];
+            for (var i = caps.length - 1; i >= 0; i--) {
+                var e = caps[i] || {};
+                var u = String(e.u || '');
+                var r = e.r || null;
+                if (u.indexOf(key) < 0) continue;
+                if (!r) continue;
+                var opt = { credentials: 'include', method: r.m || 'POST' };
+                if (r.h) opt.headers = r.h;
+                if (r.d) opt.body = r.d;
+                fetch(u, opt).then(function (resp) {
+                    return resp.text().then(function (t) {
+                        window.__dshReplay = String(resp.status) + '|' + t;
+                    });
+                }).catch(function (err) {
+                    window.__dshReplay = 'ERR ' + err.message;
+                });
+                window.__dshStarted = 1;
+                return;
+            }
+            window.__dshReplay = 'NONE';
+        })();
         """
-        do {
-            let v = try await wv.callAsyncJavaScript(js, arguments: ["key": urlContains], in: nil, in: .page)
-            guard let s = v as? String else { return "NOTSTRING" }
-            return s
-        } catch {
-            return "ERR " + error.localizedDescription
+        let js = kick.replacingOccurrences(of: "KEY", with: """ + urlContains + """)
+        _ = try? await wv.evaluateJavaScript(js)
+        for _ in 0..<40 {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            let v = try? await wv.evaluateJavaScript("window.__dshReplay || ''")
+            if let s = v as? String, !s.isEmpty {
+                return s
+            }
+            if wv.url == nil { return "NOURL" }
         }
+        return "TIMEOUT"
     }
 
     /// 保证 list-jd 这个槽里已经打开了京东页面（没有就打开并等加载完）
