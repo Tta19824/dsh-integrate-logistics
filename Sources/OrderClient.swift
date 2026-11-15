@@ -654,30 +654,30 @@ enum OrderClient {
         return out
     }
 
-    /// 调试用的可分享文件（不存在的也列出来，由界面显示「未生成」）
+    /// 调试用的可分享文件：每个平台只列自己的那几份，且只返回真实存在的
     static func debugFiles(for platform: Platform) -> [DebugFile] {
-        [
-            DebugFile(id: "page-\(platform.rawValue)", label: "\(platform.name) · 页面文本", url: pageFile(for: platform)),
-            DebugFile(id: "payload-\(platform.rawValue)", label: "\(platform.name) · 接口数据", url: payloadFile(for: platform)),
-            DebugFile(id: "raw-\(platform.rawValue)", label: "\(platform.name) · 旧版原始页面", url: latestRawFile(for: platform)),
-            DebugFile(id: "detail-\(platform.rawValue)", label: "\(platform.name) · 详情接口", url: detailPayloadFile(for: platform)),
-            DebugFile(id: "cards-\(platform.rawValue)", label: "\(platform.name) · 列表卡片", url: cardsFile(for: platform)),
-            DebugFile(id: "html-\(platform.rawValue)", label: "\(platform.name) · 网页源码", url: htmlFile(for: platform)),
-            DebugFile(id: "tblogi-\(platform.rawValue)", label: "\(platform.name) · 物流接口", url: tbLogisticsFile(for: platform)),
-            DebugFile(id: "digest-\(platform.rawValue)", label: "\(platform.name) · 图片时间", url: digestFile(for: platform)),
-            DebugFile(id: "tbdetail-\(platform.rawValue)", label: "\(platform.name) · 订单详情页", url: tbDetailFile(for: platform)),
-            DebugFile(id: "resources-\(platform.rawValue)", label: "\(platform.name) · 资源地址", url: resourcesFile(for: platform)),
-            DebugFile(id: "tblogihtml-\(platform.rawValue)", label: "\(platform.name) · 物流页源码", url: tbLogisticsHTMLFile(for: platform)),
-            DebugFile(id: "tbrequests", label: "淘宝 · 物流请求", url: tbRequestsFile(for: platform)),
-            DebugFile(id: "tblistreq", label: "淘宝 · 列表请求", url: tbListRequestsFile(for: platform)),
-            DebugFile(id: "tbrawhtml", label: "淘宝 · 直连HTML", url: tbRawHTMLFile(for: platform)),
-            DebugFile(id: "tblistraw", label: "淘宝 · 列表直连HTML", url: tbListRawFile(for: platform)),
-            DebugFile(id: "resourcesdetail-\(platform.rawValue)", label: "\(platform.name) · 详情页资源", url: resourcesDetailFile(for: platform)),
-            DebugFile(id: "jd-request", label: "京东 · 直连请求", url: JdDirect.requestFile()),
-            DebugFile(id: "pdd-fast", label: "拼多多 · 直连响应", url: PddFast.responseFile()),
-            DebugFile(id: "jddetail", label: "京东 · 订单详情页", url: jdDetailFile(for: platform))
+        var list: [DebugFile] = [
+            DebugFile(id: "page-\(platform.rawValue)", label: "页面文本", url: pageFile(for: platform)),
+            DebugFile(id: "html-\(platform.rawValue)", label: "网页源码", url: htmlFile(for: platform)),
+            DebugFile(id: "payload-\(platform.rawValue)", label: "接口数据", url: payloadFile(for: platform)),
+            DebugFile(id: "digest-\(platform.rawValue)", label: "图片时间", url: digestFile(for: platform))
         ]
+        switch platform {
+        case .pdd:
+            list.append(DebugFile(id: "pdddetail-\(platform.rawValue)", label: "详情接口", url: detailPayloadFile(for: platform)))
+            list.append(DebugFile(id: "pddfast-\(platform.rawValue)", label: "直连响应", url: PddFast.responseFile()))
+        case .tb:
+            list.append(DebugFile(id: "tbdetail-\(platform.rawValue)", label: "订单详情页", url: tbDetailFile(for: platform)))
+            list.append(DebugFile(id: "tblistreq-\(platform.rawValue)", label: "列表请求", url: tbListRequestsFile(for: platform)))
+            list.append(DebugFile(id: "tblogihtml-\(platform.rawValue)", label: "物流页源码", url: tbLogisticsHTMLFile(for: platform)))
+            list.append(DebugFile(id: "tbrawhtml-\(platform.rawValue)", label: "物流直连HTML", url: tbRawHTMLFile(for: platform)))
+        case .jd:
+            list.append(DebugFile(id: "jddetail-\(platform.rawValue)", label: "订单详情页", url: jdDetailFile(for: platform)))
+            list.append(DebugFile(id: "jdreq-\(platform.rawValue)", label: "直连请求", url: JdDirect.requestFile()))
+        }
+        return list.filter { FileManager.default.fileExists(atPath: $0.url.path) }
     }
+
 }
 
 struct DebugFile: Identifiable {

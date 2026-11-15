@@ -36,8 +36,11 @@ struct PlatformsView: View {
                 Section {
                     ForEach(Platform.allCases) { platform in
                         let files = OrderClient.debugFiles(for: platform)
-                        ForEach(files) { file in
-                            if FileManager.default.fileExists(atPath: file.url.path) {
+                        if !files.isEmpty {
+                            Text(platform.name)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            ForEach(files) { file in
                                 ShareLink(item: file.url) {
                                     HStack {
                                         Text(file.label)
@@ -46,13 +49,14 @@ struct PlatformsView: View {
                                             .foregroundStyle(.secondary)
                                     }
                                 }
-                            } else {
-                                HStack {
-                                    Text(file.label)
-                                    Spacer()
-                                    Text("未生成").foregroundStyle(.secondary)
-                                }
                             }
+                        }
+                    }
+
+                    let allFiles = Platform.allCases.flatMap { OrderClient.debugFiles(for: $0) }
+                    if !allFiles.isEmpty {
+                        ShareLink(items: allFiles.map { $0.url }) {
+                            Text("分享全部调试文件（\(allFiles.count) 个）")
                         }
                     }
 
@@ -66,7 +70,7 @@ struct PlatformsView: View {
                 } header: {
                     Text("调试 · 抓取文件")
                 } footer: {
-                    Text("点有大小的一行即可分享出去（微信 → 文件传输助手）。")
+                    Text("只列已经生成的。点单行分享一个文件；点「分享全部」一次性发出去（微信 → 文件传输助手）。")
                 }
 
                 Section {
