@@ -402,7 +402,7 @@ final class WebOrderFetcher: NSObject {
             window.__dshReplay = 'NONE';
         })();
         """
-        let js = kick.replacingOccurrences(of: "KEY", with: """ + urlContains + """)
+        let js = kick.replacingOccurrences(of: "KEY", with: "\u{0022}" + urlContains + "\u{0022}")
         _ = try? await wv.evaluateJavaScript(js)
         for _ in 0..<40 {
             try? await Task.sleep(nanoseconds: 150_000_000)
