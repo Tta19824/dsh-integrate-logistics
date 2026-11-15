@@ -344,7 +344,7 @@ enum OrderClient {
                 }
                 // 只回放回来已完成的单（说明存的不是“待收货”那一页）时，当作失败，回退 WebView
                 let hasActive = fastOrders.contains { $0.status == .paid || $0.status == .shipped }
-                if !hasActive { fastNote = "快路：重放 \(fastOrders.count) 条但都不是待发货/待收货" }
+                if !hasActive && !fastOrders.isEmpty { fastNote = "快路：重放 \(fastOrders.count) 条但都不是待发货/待收货" }
                 if !fastOrders.isEmpty && hasActive {
                     fastOrders = await enrichShipping(fastOrders, cookie: cookie)
                     _ = self.write(payload, to: self.payloadFile(for: .pdd))
