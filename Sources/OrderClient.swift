@@ -262,9 +262,9 @@ enum OrderClient {
         if let best {
             return FetchOutcome(
                 orders: orders,
-                httpStatus: best.httpStatus,
-                byteCount: best.byteCount,
-                rawFileURL: best.rawFileURL,
+                httpStatus: nil,
+                byteCount: best.text.count,
+                rawFileURL: nil,
                 note: note
             )
         }
