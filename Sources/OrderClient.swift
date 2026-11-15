@@ -121,7 +121,9 @@ enum OrderClient {
                 referer: "https://my.m.jd.com/"
             ) else { continue }
             // 京东风控页：「验证一下，购物无忧」，只有几十个字，换下一个地址
-            let blocked = cap.text.count < 300 && (cap.text.contains("快速验证") || cap.text.contains("验证一下"))
+            let trimmed = cap.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let isJSONError = trimmed.hasPrefix("{") && (trimmed.contains("functionId") || trimmed.contains("\"code\":\"1\""))
+            let blocked = (cap.text.count < 300 && (cap.text.contains("快速验证") || cap.text.contains("验证一下"))) || isJSONError
             if blocked { continue }
             if best == nil || cap.text.count > (best?.text.count ?? 0) { best = cap }
             if cap.text.count > 600 { break }

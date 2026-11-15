@@ -484,16 +484,14 @@ struct LogisticsSheet: View {
         try? cap.text.data(using: .utf8)?.write(to: OrderClient.jdDetailFile(for: .jd), options: .atomic)
         let parsed = TaobaoJdParser.parseJdLogistics(text: cap.text, payloadJSON: cap.payloadJSON)
         events = parsed.events
-        tracking = parsed.tracking.isEmpty ? order.orderNo : parsed.tracking
+        tracking = parsed.tracking
         carrierLine = parsed.carrier.isEmpty ? order.carrier : parsed.carrier
         if events.isEmpty {
-            let head = cap.text
-                .replacingOccurrences(of: "\n", with: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .prefix(60)
-            message = "没读到物流轨迹（\(cap.text.count) 字｜落点 \(cap.finalURL)｜开头 \(head)）"
-            loading = false
-            return
+            // 还没发货：京东列表接口只给「正在出库 / 仓库处理中」这类摘要，
+            // 拿摘要当一条进度，别让详情页空着。
+            let latest = order.logistics.isEmpty ? "等待京东发货，发货后会自动更新" : order.logistics
+            events = [ShipEvent(id: 0, time: "", desc: latest)]
+            message = "这单还没发货，先显示最新进度"
         }
         TraceCache.shared.put(cacheKey, TraceCache.Item(at: Date(), events: events, tracking: tracking, carrier: carrierLine))
         if let latest = events.first, !latest.desc.isEmpty {
