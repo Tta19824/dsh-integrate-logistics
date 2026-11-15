@@ -316,7 +316,7 @@ final class WebOrderFetcher: NSObject {
     """
 
     /// 启动预热：App 一打开就把订单页加载好，用户点刷新时页面已经是热页。
-    func warmUp(url: URL, cookieHeader: String) async {
+    func warmUp(url: URL, cookieHeader: String, platform: Platform = .pdd) async {
         let wv = slots["pdd"] ?? makeWebView(slot: "pdd")
         webView = wv
         await prefillCookies(cookieHeader, platform: platform, force: platform == .jd)
