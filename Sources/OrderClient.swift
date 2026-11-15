@@ -327,7 +327,7 @@ enum OrderClient {
         let pageErr = write(capture.text, to: pageFile(for: platform))
         let payloadErr = write(capture.payloadJSON, to: payloadFile(for: platform))
         if platform == .tb {
-            let reqs = TaobaoJdParser.extractMtopRequests(payloadJSON: capture.payloadJSON)
+            let reqs = TaobaoJdParser.extractMtopRequests(payloadJSON: capture.payloadJSON) ?? ""
             _ = write(reqs, to: tbListRequestsFile(for: .tb))
         }
         let htmlErr = write(capture.html, to: htmlFile(for: platform))
