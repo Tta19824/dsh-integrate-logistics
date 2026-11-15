@@ -104,6 +104,30 @@ struct PlatformsView: View {
                     Text("挨个点开，看哪一页顶部显示「订单号 ×N」大于 0 —— 那就是真正的订单列表页，把编号告诉我。")
                 }
 
+                if let jd = app.orders.first(where: { $0.platform == .jd }) {
+                    Section {
+                        ForEach(Array(PddLink.jdCandidates(orderNo: jd.orderNo).enumerated()), id: \.offset) { pair in
+                            Button {
+                                if let url = URL(string: pair.element.url) {
+                                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(pair.element.name)
+                                    Text(pair.element.url)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("调试 · 京东跳转")
+                    } footer: {
+                        Text("挨个点，看哪个能进京东 App 的订单详情页（不是首页、不是全部订单）；告诉我是第几个，我就把它设成默认。")
+                    }
+                }
+
                 if let tb = app.orders.first(where: { $0.platform == .tb }) {
                     Section {
                         ForEach(Array(PddLink.tbCandidates(orderNo: tb.orderNo, itemID: tb.goodsID).enumerated()), id: \.offset) { pair in

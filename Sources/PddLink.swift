@@ -16,9 +16,7 @@ enum PddLink {
         case .tb:
             openTaobao(orderNo: orderNo, itemID: itemID)
         case .jd:
-            if let url = URL(string: "openapp.jdmobile://") {
-                UIApplication.shared.open(url, options: [:], completionHandler: nil)
-            }
+            openJD(orderNo: orderNo)
         }
     }
 
@@ -48,6 +46,37 @@ enum PddLink {
         UIApplication.shared.open(url, options: [:]) { ok in
             guard !ok, let last = candidates.last, let web = URL(string: last.url) else { return }
             UIApplication.shared.open(web, options: [:], completionHandler: nil)
+        }
+    }
+
+    /// 京东候选深链（virtual 路由）
+    static func jdCandidates(orderNo: String) -> [Route] {
+        let detail = "https://trade.m.jd.com/order/n_detail_jdm.shtml?deal_id=\(orderNo)"
+        let list = "https://order.m.jd.com/orderList/1"
+        var out: [Route] = []
+        out.append(Route(name: "① 订单详情（virtual + m）", url: virtual(detail)))
+        out.append(Route(name: "② 订单详情（orderDetail）", url: virtual("https://order.m.jd.com/orderDetail?orderId=\(orderNo)")))
+        out.append(Route(name: "③ 我的订单列表", url: virtual(list)))
+        out.append(Route(name: "④ 只唤起京东（兜底）", url: "openapp.jdmobile://"))
+        out.append(Route(name: "⑤ 网页版（兜底）", url: detail))
+        return out
+    }
+
+    /// 京东 App 路由：openapp.jdmobile://virtual?params={...}
+    static func virtual(_ target: String) -> String {
+        let json = "{\"category\":\"jump\",\"des\":\"m\",\"url\":\"\(target)\",\"sourceType\":\"jump\"}"
+        return "openapp.jdmobile://virtual?params=" + enc(json)
+    }
+
+    static func openJD(orderNo: String) {
+        tryRoutes(jdCandidates(orderNo: orderNo), index: 0)
+    }
+
+    /// 依次尝试，打不开才换下一个
+    static func tryRoutes(_ list: [Route], index: Int) {
+        guard index < list.count, let url = URL(string: list[index].url) else { return }
+        UIApplication.shared.open(url, options: [:]) { ok in
+            if !ok { tryRoutes(list, index: index + 1) }
         }
     }
 
