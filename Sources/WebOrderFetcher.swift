@@ -368,6 +368,38 @@ final class WebOrderFetcher: NSObject {
         }
     }
 
+    /// 在已经打开的页面里，把之前抓到的某条请求原样再发一次。
+    /// 好处：cookie、UA、签名参数都由页面自己带，不用我们把凭证搬来搬去。
+    /// 返回 "status|body"，没有可用页面或没有匹配请求时返回 nil。
+    func inPageReplay(slot: String, urlContains: String) async -> String? {
+        guard let wv = slots[slot], wv.url != nil else { return nil }
+        let js = """
+        var key = args.key;
+        var caps = window.__dshCap || [];
+        for (var i = caps.length - 1; i >= 0; i--) {
+            var e = caps[i] || {};
+            var u = String(e.u || '');
+            var r = e.r || null;
+            if (u.indexOf(key) < 0) continue;
+            if (!r) continue;
+            var opt = { credentials: 'include', method: r.m || 'POST' };
+            if (r.h) opt.headers = r.h;
+            if (r.d) opt.body = r.d;
+            return fetch(u, opt).then(function (resp) {
+                return resp.text().then(function (t) { return String(resp.status) + '|' + t; });
+            }).catch(function (err) { return 'ERR ' + err.message; });
+        }
+        return 'NONE';
+        """
+        do {
+            let v = try await wv.callAsyncJavaScript(js, arguments: ["key": urlContains], in: nil, in: .page)
+            guard let s = v as? String, s != "NONE", !s.hasPrefix("ERR") else { return nil }
+            return s
+        } catch {
+            return nil
+        }
+    }
+
     /// 保证 list-jd 这个槽里已经打开了京东页面（没有就打开并等加载完）
     func ensureJdPage(cookieHeader: String, wait: Double = 6) async -> Bool {
         if let wv = slots["list-jd"], let host = wv.url?.host, host.contains("jd.com") { return true }
