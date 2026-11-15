@@ -249,7 +249,7 @@ enum TaobaoJdParser {
             out.events = parseJdTraceText(text)
         }
         out.tracking = trackingNumber(fromText: text)
-        out.carrier = PinduoduoParser.carrierName(from: text)
+        out.carrier = PinduoduoParser.carrierName(from: text) ?? ""
         return out
     }
 

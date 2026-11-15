@@ -110,8 +110,8 @@ enum OrderClient {
             seconds: 14,
             clickTabs: false,
             scroll: true,
-            slot: "detail-jd",
-            readyJS: "(/运输中|已签收|派送中|已送达|运单号|承运人/.test(document.body.innerText)) ? '1' : '0'"
+            readyJS: "(/运输中|已签收|派送中|已送达|运单号|承运人/.test(document.body.innerText)) ? '1' : '0'",
+            slot: "detail-jd"
         )
     }
 
