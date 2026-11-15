@@ -376,10 +376,11 @@ final class WebOrderFetcher: NSObject {
 
         for url in urls {
             var request = URLRequest(url: url)
-            request.setValue(
-                userAgent ?? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-                forHTTPHeaderField: "User-Agent"
-            )
+            if let userAgent, !userAgent.isEmpty {
+                request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            } else if userAgent == nil {
+                request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+            }
             if let referer, !referer.isEmpty {
                 request.setValue(referer, forHTTPHeaderField: "Referer")
             }

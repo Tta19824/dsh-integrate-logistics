@@ -231,7 +231,7 @@ enum OrderClient {
         let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         guard let url = URL(string: "https://order.jd.com/center/list.action") else { throw FetchError.badURL }
-        let trials: [(String, String?)] = [("桌面UA", desktopUA), ("默认UA", nil), ("手机UA", mobileUA)]
+        let trials: [(String, String?)] = [("桌面UA", desktopUA), ("默认UA", ""), ("手机UA", mobileUA)]
         var lines: [String] = []
         var best: WebOrderFetcher.Capture?
         var orders: [Order] = []
