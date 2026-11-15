@@ -383,6 +383,9 @@ enum OrderClient {
             note += "；页面开头：\(info.snippet.prefix(50))"
         }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
+        if platform == .jd {
+            note += "；凭证 [" + capture.headerCookieNames.joined(separator: ",") + "]；WebView [" + capture.storeCookieNames.joined(separator: ",") + "]"
+        }
         note += jdProbeLine
         note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
 
