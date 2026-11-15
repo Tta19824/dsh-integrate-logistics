@@ -487,7 +487,11 @@ struct LogisticsSheet: View {
         tracking = parsed.tracking.isEmpty ? order.orderNo : parsed.tracking
         carrierLine = parsed.carrier.isEmpty ? order.carrier : parsed.carrier
         if events.isEmpty {
-            message = "没读到物流轨迹（\(cap.text.count) 字｜落点 \(cap.finalURL)）"
+            let head = cap.text
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .prefix(60)
+            message = "没读到物流轨迹（\(cap.text.count) 字｜落点 \(cap.finalURL)｜开头 \(head)）"
             loading = false
             return
         }
