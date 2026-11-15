@@ -856,6 +856,33 @@ enum TaobaoJdParser {
         return ""
     }
 
+    /// 把物流页发出的 mtop 请求整理成调试文件：URL、方法、请求体、响应大小与前 2000 字。
+    static func extractMtopRequests(payloadJSON: String) -> String? {
+        guard let data = payloadJSON.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
+        var out: [[String: Any]] = []
+        for entry in root {
+            guard let url = entry["u"] as? String, url.contains("mtop") else { continue }
+            var item: [String: Any] = ["url": url]
+            if let req = entry["r"] as? [String: Any] {
+                item["method"] = req["m"] ?? "GET"
+                item["headers"] = req["h"] ?? [:]
+                let body = (req["d"] as? String) ?? ""
+                item["body"] = String(body.prefix(4000))
+            } else {
+                item["method"] = "unknown"
+            }
+            let resp = (entry["b"] as? String) ?? ""
+            item["respBytes"] = resp.count
+            item["respHead"] = String(resp.prefix(2000))
+            out.append(item)
+        }
+        guard !out.isEmpty else { return nil }
+        if let d = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted]),
+           let s = String(data: d, encoding: .utf8) { return s }
+        return nil
+    }
+
     static func parseTaobaoTraceHTML(_ html: String) -> [ShipEvent] {
         guard !html.isEmpty else { return [] }
         let pattern = "class=\"rax-text-v2 title\">([^<]*)<\\/span>|class=\"rax-text-v2 subtitle\">([^<]*)<\\/span>|flexRow desc\">([\\s\\S]*?)<\\/div>"

@@ -84,6 +84,11 @@ enum OrderClient {
         rawDirectory().appendingPathComponent("tb_logistics_\(platform.rawValue).json")
     }
 
+    /// 淘宝物流页这次发出的 mtop 请求（URL + 请求体 + 响应），用来做直连重放实验
+    static func tbRequestsFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("tb_requests.json")
+    }
+
     /// 页面这次加载过的所有资源地址（找出真正的数据接口）
     static func resourcesFile(for platform: Platform) -> URL {
         rawDirectory().appendingPathComponent("resources_\(platform.rawValue).json")
@@ -612,6 +617,7 @@ enum OrderClient {
             DebugFile(id: "tbdetail-\(platform.rawValue)", label: "\(platform.name) · 订单详情页", url: tbDetailFile(for: platform)),
             DebugFile(id: "resources-\(platform.rawValue)", label: "\(platform.name) · 资源地址", url: resourcesFile(for: platform)),
             DebugFile(id: "tblogihtml-\(platform.rawValue)", label: "\(platform.name) · 物流页源码", url: tbLogisticsHTMLFile(for: platform)),
+            DebugFile(id: "tbrequests", label: "淘宝 · 物流请求", url: tbRequestsFile(for: platform)),
             DebugFile(id: "resourcesdetail-\(platform.rawValue)", label: "\(platform.name) · 详情页资源", url: resourcesDetailFile(for: platform)),
             DebugFile(id: "jd-request", label: "京东 · 直连请求", url: JdDirect.requestFile()),
             DebugFile(id: "pdd-fast", label: "拼多多 · 直连响应", url: PddFast.responseFile()),

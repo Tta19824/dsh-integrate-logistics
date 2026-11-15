@@ -554,6 +554,9 @@ struct LogisticsSheet: View {
                 landedURL = capL.finalURL
             }
             try? capL.payloadJSON.data(using: .utf8)?.write(to: OrderClient.tbLogisticsFile(for: .tb), options: .atomic)
+            if let reqJSON = TaobaoJdParser.extractMtopRequests(payloadJSON: capL.payloadJSON) {
+                try? reqJSON.data(using: .utf8)?.write(to: OrderClient.tbRequestsFile(for: .tb), options: .atomic)
+            }
             try? capL.resources.data(using: .utf8)?.write(to: OrderClient.resourcesFile(for: .tb), options: .atomic)
             try? capL.html.data(using: .utf8)?.write(to: OrderClient.tbLogisticsHTMLFile(for: .tb), options: .atomic)
             logisticsLanding = capL.finalURL
