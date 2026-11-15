@@ -100,6 +100,25 @@ enum OrderClient {
     }
 
     /// 淘宝订单详情页的页面文字（排查快递公司与轨迹用）
+    static func captureJdDetail(orderNo: String, cookieHeader: String) async throws -> WebOrderFetcher.Capture {
+        let raw = "https://trade.m.jd.com/order/n_detail_jdm.shtml?deal_id=\(orderNo)"
+        guard let url = URL(string: raw) else { throw FetchError.badURL }
+        return try await WebOrderFetcher.shared.capture(
+            platform: .jd,
+            urls: [url],
+            cookieHeader: cookieHeader,
+            seconds: 14,
+            clickTabs: false,
+            scroll: true,
+            slot: "detail-jd",
+            readyJS: "(/运输中|已签收|派送中|已送达|运单号|承运人/.test(document.body.innerText)) ? '1' : '0'"
+        )
+    }
+
+    static func jdDetailFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("jd_detail_\(platform.rawValue).txt")
+    }
+
     static func tbDetailFile(for platform: Platform) -> URL {
         rawDirectory().appendingPathComponent("tb_detail_\(platform.rawValue).txt")
     }
@@ -514,7 +533,8 @@ enum OrderClient {
             DebugFile(id: "resources-\(platform.rawValue)", label: "\(platform.name) · 资源地址", url: resourcesFile(for: platform)),
             DebugFile(id: "tblogihtml-\(platform.rawValue)", label: "\(platform.name) · 物流页源码", url: tbLogisticsHTMLFile(for: platform)),
             DebugFile(id: "resourcesdetail-\(platform.rawValue)", label: "\(platform.name) · 详情页资源", url: resourcesDetailFile(for: platform)),
-            DebugFile(id: "jd-request", label: "京东 · 直连请求", url: JdDirect.requestFile())
+            DebugFile(id: "jd-request", label: "京东 · 直连请求", url: JdDirect.requestFile()),
+            DebugFile(id: "jddetail", label: "京东 · 订单详情页", url: jdDetailFile(for: platform))
         ]
     }
 }

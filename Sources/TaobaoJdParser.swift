@@ -233,6 +233,52 @@ enum TaobaoJdParser {
     }
 
     /// 京东「我的订单」接口：响应体是 {"body":{"orderList":[...]}}。
+    struct JdLogistics {
+        var events: [ShipEvent] = []
+        var tracking: String = ""
+        var carrier: String = ""
+    }
+
+    /// 京东物流详情：先看接口里的结构化状态，读不到再按「时间行 + 下一行描述」解析页面文字
+    static func parseJdLogistics(text: String, payloadJSON: String) -> JdLogistics {
+        var out = JdLogistics()
+        if let data = payloadJSON.data(using: .utf8) {
+            out.events = ShipTracking.events(from: data)
+        }
+        if out.events.isEmpty {
+            out.events = parseJdTraceText(text)
+        }
+        out.tracking = trackingNumber(fromText: text)
+        out.carrier = PinduoduoParser.carrierName(from: text)
+        return out
+    }
+
+    static func parseJdTraceText(_ text: String) -> [ShipEvent] {
+        let lines = text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let pattern = #"^(?:\d{4}-\d{2}-\d{2}\s+)?\d{1,2}:\d{2}(?::\d{2})?$"#
+        let regex = try? NSRegularExpression(pattern: pattern)
+        var out: [ShipEvent] = []
+        var i = 0
+        while i < lines.count {
+            let line = lines[i]
+            let range = NSRange(line.startIndex..<line.endIndex, in: line)
+            let isTime = regex?.firstMatch(in: line, range: range) != nil
+            if isTime, i + 1 < lines.count {
+                let desc = lines[i + 1]
+                if !desc.isEmpty, desc.range(of: #"^\d{1,2}:\d{2}"#, options: .regularExpression) == nil {
+                    out.append(ShipEvent(id: out.count, time: line, desc: desc))
+                }
+                i += 2
+                continue
+            }
+            i += 1
+        }
+        return out
+    }
+
     static func parseJdOrderList(payloadJSON: String) -> [Order] {
         guard let data = payloadJSON.data(using: .utf8),
               let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {

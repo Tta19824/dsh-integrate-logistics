@@ -460,6 +460,45 @@ struct LogisticsSheet: View {
     /// 淘宝：详情页文字 + 物流轨迹页接口，两份都试，取轨迹更全的那份。
     @State private var costLabel = ""
 
+    /// 京东：订单详情页里的物流轨迹
+    private func loadJD() async {
+        let cacheKey = "jd:\(order.orderNo)"
+        if let cached = TraceCache.shared.get(cacheKey) {
+            events = cached.events
+            tracking = cached.tracking
+            carrierLine = cached.carrier.isEmpty ? order.carrier : cached.carrier
+            loading = false
+            await refreshRoute()
+            return
+        }
+        guard let cookie = await CookieStore.currentHeader(for: .jd), !cookie.isEmpty else {
+            message = "还没登录京东，先去「平台」页登录"
+            loading = false
+            return
+        }
+        guard let cap = try? await OrderClient.captureJdDetail(orderNo: order.orderNo, cookieHeader: cookie) else {
+            message = "没打开京东订单详情页"
+            loading = false
+            return
+        }
+        try? cap.text.data(using: .utf8)?.write(to: OrderClient.jdDetailFile(for: .jd), options: .atomic)
+        let parsed = TaobaoJdParser.parseJdLogistics(text: cap.text, payloadJSON: cap.payloadJSON)
+        events = parsed.events
+        tracking = parsed.tracking.isEmpty ? order.orderNo : parsed.tracking
+        carrierLine = parsed.carrier.isEmpty ? order.carrier : parsed.carrier
+        if events.isEmpty {
+            message = "没读到物流轨迹（\(cap.text.count) 字｜落点 \(cap.finalURL)）"
+            loading = false
+            return
+        }
+        TraceCache.shared.put(cacheKey, TraceCache.Item(at: Date(), events: events, tracking: tracking, carrier: carrierLine))
+        if let latest = events.first, !latest.desc.isEmpty {
+            OrderStore.shared.setTrace(orderNo: order.orderNo, text: latest.desc)
+        }
+        loading = false
+        await refreshRoute()
+    }
+
     private func loadTaobao() async {
         let cacheKey = "tb:\(order.orderNo)"
         if let cached = TraceCache.shared.get(cacheKey) {
@@ -609,6 +648,10 @@ struct LogisticsSheet: View {
     private func load() async {
         if order.platform == .tb {
             await loadTaobao()
+            return
+        }
+        if order.platform == .jd {
+            await loadJD()
             return
         }
         guard let cookie = await CookieStore.currentHeader(for: .pdd), !cookie.isEmpty else {
