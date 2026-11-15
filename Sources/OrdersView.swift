@@ -503,7 +503,9 @@ struct LogisticsSheet: View {
 
     private func loadTaobao() async {
         let cacheKey = "tb:\(order.orderNo)"
-        if let cached = TraceCache.shared.get(cacheKey) {
+        // 缓存只跳过「已经有取件码」的情况：没有码说明这张单还没读过物流页，
+        // 得再抓一次把码拿回来（缓存里没有码）。
+        if let cached = TraceCache.shared.get(cacheKey), !order.pickupCode.isEmpty {
             events = cached.events
             tracking = cached.tracking
             carrierLine = cached.carrier.isEmpty ? order.carrier : cached.carrier
@@ -526,6 +528,7 @@ struct LogisticsSheet: View {
         var logisticsLanding = ""
         let openedAt = Date()
         var best = TaobaoJdParser.TbLogistics()
+        var pickupCandidate = ""
 
         // 慢路径：直接开物流轨迹页：它的 mtop 响应走 JSONP，钩子能抓到全量轨迹，比解析页面文字靠谱
         if best.events.count < 3,
@@ -533,6 +536,7 @@ struct LogisticsSheet: View {
             var whole = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: capL.payloadJSON, text: capL.text)
             let fromHTML = TaobaoJdParser.parseTaobaoTraceHTML(capL.html)
             if whole.pickup.isEmpty { whole.pickup = TaobaoJdParser.tbPickup(in: capL.html) }
+            if pickupCandidate.isEmpty, !whole.pickup.isEmpty { pickupCandidate = whole.pickup }
             if fromHTML.count > whole.events.count {
                 whole.events = fromHTML
                 if whole.carrier.isEmpty { whole.carrier = order.carrier }
@@ -609,6 +613,7 @@ struct LogisticsSheet: View {
         } else if !order.carrier.isEmpty {
             carrierLine = order.carrier
         }
+        if best.pickup.isEmpty { best.pickup = pickupCandidate }
         if !best.pickup.isEmpty {
             OrderStore.shared.setPickup(orderNo: order.orderNo, code: best.pickup)
         }
