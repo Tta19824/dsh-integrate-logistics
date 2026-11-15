@@ -485,31 +485,31 @@ enum OrderClient {
 
         // 快路：之前抓到过 order_list 请求，直接重放，不开 WebView。
         // 页面会发好几条（默认/待发货/待收货），有的返回空列表，所以逐份试。
-        var fastNote = ""
+        var fastNote = "快路："
         if cookie.isEmpty {
-            fastNote = "快路：没有 cookie"
+            fastNote += "没有 cookie"
         } else {
             let saves = PddFast.loadAll()
             if saves.isEmpty {
-                fastNote = "快路：无存档"
+                fastNote += "无存档"
             } else {
                 for (index, saved) in saves.enumerated() {
                     guard let result = await PddFast.replay(saved, cookie: cookie) else {
-                        fastNote = "快路：第 \(index + 1) 份重放失败（网络）"
+                        fastNote += (fastNote.count > 3 ? "｜" : "") + "第 \(index + 1) 份重放失败（网络）"
                         continue
                     }
                     if result.status != 200 {
-                        fastNote = "快路：第 \(index + 1) 份重放 HTTP \(result.status)"
+                        fastNote += (fastNote.count > 3 ? "｜" : "") + "第 \(index + 1) 份重放 HTTP \(result.status)"
                         continue
                     }
                     _ = self.write(result.text, to: PddFast.responseFile())
                     if result.text.contains("harmony_empty_height_and_back_refresh") {
                         // 这是页面用来「确认有没有新数据」的探针请求，永远返回空，跳过
-                        fastNote = "快路：第 \(index + 1) 份是探针请求"
+                        fastNote += (fastNote.count > 3 ? "｜" : "") + "第 \(index + 1) 份是探针请求"
                         continue
                     }
                     guard fastOk(result.text) else {
-                        fastNote = "快路：第 \(index + 1) 份重放 \(result.text.count) 字节但不是订单 JSON"
+                        fastNote += (fastNote.count > 3 ? "｜" : "") + "第 \(index + 1) 份重放 \(result.text.count) 字节但不是订单 JSON"
                         continue
                     }
                     let payload = PddFast.payloadJSON(url: saved.url, body: result.text)
@@ -518,7 +518,7 @@ enum OrderClient {
                     // 否则「取完快递」之后每次刷新都会掉回 WebView 的 7 秒。
                     let hasActive = fastOrders.contains { $0.status == .paid || $0.status == .shipped }
                     if !fastOrders.isEmpty && !hasActive {
-                        fastNote = "快路：第 \(index + 1) 份返回 \(fastOrders.count) 条但都不是待发货/待收货"
+                        fastNote += (fastNote.count > 3 ? "｜" : "") + "第 \(index + 1) 份返回 \(fastOrders.count) 条但都不是待发货/待收货"
                         continue
                     }
                     fastOrders = await enrichShipping(fastOrders, cookie: cookie)

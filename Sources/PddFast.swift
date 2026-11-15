@@ -38,6 +38,9 @@ enum PddFast {
             let url = (raw["u"] as? String) ?? ""
             guard url.contains("order_list") else { continue }
             let body = (raw["d"] as? String) ?? ""
+            let resp = (entry["b"] as? String) ?? ""
+            if resp.contains("harmony_empty_height_and_back_refresh") { continue }
+            if !resp.contains("order_sn") { continue }
             guard !seen.contains(body) else { continue }
             var headers: [String: String] = [:]
             if let h = raw["h"] as? [String: Any] {
@@ -54,7 +57,7 @@ enum PddFast {
             added += 1
         }
 
-        if picked.count > 6 { picked = Array(picked.suffix(6)) }
+        if picked.count > 10 { picked = Array(picked.suffix(10)) }
         if let encoded = try? JSONEncoder().encode(picked) {
             try? encoded.write(to: file(), options: .atomic)
         }
