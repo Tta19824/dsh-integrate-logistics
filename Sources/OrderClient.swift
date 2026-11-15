@@ -236,13 +236,13 @@ enum OrderClient {
                 seconds: seconds,
                 clickTabs: false,
                 clickTexts: clickTexts,
-                clickReadyJS: clickReadyJS,
                 minWait: 0,
                 strict: true,
                 scroll: true,
                 userAgent: ua,
                 readyJS: readyJS,
-                slot: "list-\(platform.rawValue)"
+                slot: "list-\(platform.rawValue)",
+                clickReadyJS: clickReadyJS
             )
             tried.append(contentsOf: one.tried)
             let parsed = TaobaoJdParser.parse(platform: platform, text: one.text, payloadJSON: one.payloadJSON, html: one.html)
@@ -310,7 +310,8 @@ enum OrderClient {
         }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
         if platform == .pdd, !capture.payloadJSON.isEmpty {
-            note += "；" + await PddDirect.probe(payloadJSON: capture.payloadJSON, cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader)
+            let pddLine = await PddDirect.probe(payloadJSON: capture.payloadJSON, cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader)
+            note += "；" + pddLine
         }
         note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
 
@@ -397,7 +398,8 @@ enum OrderClient {
 
         // 直连实验：把刚抓到的 order_list 请求原样重放，看服务端认不认
         if !capture.payloadJSON.isEmpty {
-            note += "；" + await PddDirect.probe(payloadJSON: capture.payloadJSON, cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader)
+            let pddLine = await PddDirect.probe(payloadJSON: capture.payloadJSON, cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader)
+            note += "；" + pddLine
         }
 
         return FetchOutcome(
