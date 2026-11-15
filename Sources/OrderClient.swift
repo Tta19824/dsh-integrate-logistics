@@ -224,80 +224,27 @@ enum OrderClient {
         )
     }
 
-    /// 京东：先用 URLSession 直取 PC 列表页 HTML（快），不行再走 WebView 三路 UA 对照（慢但能取证）。
-    private static func fetchJdDirectHTML(cookie: String) async -> (outcome: FetchOutcome?, fail: String) {
-        guard !cookie.isEmpty else { return (nil, "") }
-        let started = Date()
-        let (status, html) = await JdDirect.fetchOrderListHTML(cookie: cookie)
-        guard status == 200, html.count > 2000 else { return (nil, "京东直连HTML HTTP\(status)·\(html.count)字节") }
-        let text = HTMLTools.strip(html)
-        let parsed = TaobaoJdParser.parse(platform: .jd, text: text, payloadJSON: "")
-        let cost = String(format: "%.1f", Date().timeIntervalSince(started))
-        // 落盘原始 HTML 与文本，供分析结构（直取已经能拿到登录态页面，只差解析）
-        try? html.data(using: .utf8)?.write(to: jdListHTMLFile(), options: .atomic)
-        try? text.data(using: .utf8)?.write(to: jdListTextFile(), options: .atomic)
-        let counts = "订单号×\(JdDirect.occurrences(of: "订单号", in: text))·订单编号×\(JdDirect.occurrences(of: "订单编号", in: text))·待收货×\(JdDirect.occurrences(of: "待收货", in: text))·已完成×\(JdDirect.occurrences(of: "已完成", in: text))·合计×\(JdDirect.occurrences(of: "实付款", in: text))"
-        if parsed.isEmpty {
-            let head = text.prefix(40).replacingOccurrences(of: "\n", with: " ")
-            return (nil, "京东直连HTML \(html.count)字·订单0·\(counts)｜\(head)")
-        }
-        return (FetchOutcome(orders: parsed, httpStatus: status, byteCount: html.count, rawFileURL: nil,
-                             note: "京东直连HTML \(parsed.count) 条订单 · 用时 \(cost) 秒"), "")
-    }
-
-    static func jdListHTMLFile() -> URL { rawDirectory().appendingPathComponent("jd_list.html") }
-    static func jdListTextFile() -> URL { rawDirectory().appendingPathComponent("jd_list.txt") }
-
+    /// 京东：手机版 my.m.jd.com → 自动点「全部订单」→ 读页面文本。
+    /// 这是 0.19.6/0.19.7 验证过能出 10 单的那条路（需要手机版登录的 pt_key）。
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
-        // 先试直取 HTML（URLSession + 钥匙串 cookie），成功就不用开 WebView。
-        let fastTrial = await fetchJdDirectHTML(cookie: cookie)
-        let debugFail = fastTrial.fail
-        if let fast = fastTrial.outcome {
-            return fast
-        }
-        // 三路 UA 对照实验：同一个 URL、同一个 WebView cookie store，只换 User-Agent。
-        // 目的：判断京东 PC 列表页判「未登录」到底是因为 cookie 无效，还是因为 UA 不对。
-        let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
-        let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-        guard let url = URL(string: "https://order.jd.com/center/list.action") else { throw FetchError.badURL }
-        let trials: [(String, String?)] = [("桌面UA", desktopUA), ("默认UA", ""), ("手机UA", mobileUA)]
-        var lines: [String] = []
-        var best: WebOrderFetcher.Capture?
-        var orders: [Order] = []
-        for (name, ua) in trials {
-            do {
-                let cap = try await WebOrderFetcher.shared.capture(
-                    platform: .jd,
-                    urls: [url],
-                    cookieHeader: "",
-                    seconds: 10,
-                    clickTabs: false,
-                    stopOnEntries: false,
-                    userAgent: ua,
-                    slot: "jd-ua"
-                )
-                let one = TaobaoJdParser.parse(platform: .jd, text: cap.text, payloadJSON: cap.payloadJSON)
-                if one.count > orders.count {
-                    orders = one
-                    best = cap
-                }
-                let head = cap.text.prefix(26).replacingOccurrences(of: "\n", with: " ")
-                lines.append("\(name)→「\(cap.title)」\(cap.text.count)字·订单\(one.count)｜\(head)")
-            } catch {
-                lines.append("\(name)→失败")
-            }
-        }
-        let note = (debugFail.isEmpty ? "" : debugFail + "；") + "京东UA对照：" + lines.joined(separator: "；")
-        if let best {
-            return FetchOutcome(
-                orders: orders,
-                httpStatus: 200,
-                byteCount: best.text.count,
-                rawFileURL: nil,
-                note: note
-            )
-        }
-        throw FetchError.note(note)
+        guard !cookie.isEmpty else { throw FetchError.noCookie }
+        let started = Date()
+        let out = try await fetchWebOrders(
+            platform: .jd,
+            cookie: cookie,
+            urls: ["https://my.m.jd.com/index.html?sceneval=2"],
+            seconds: 14,
+            clickTexts: ["全部订单"],
+            clickReadyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
+        )
+        let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+        return FetchOutcome(
+            orders: out.orders,
+            httpStatus: out.httpStatus,
+            byteCount: out.byteCount,
+            rawFileURL: out.rawFileURL,
+            note: "京东手机版 " + out.note + " · 用时 " + cost + " 秒"
+        )
     }
 
     /// 淘宝 / 京东：都是前端渲染，用同一个 WebView 抓包路线，只是地址和解析器不同。
