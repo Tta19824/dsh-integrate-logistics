@@ -225,16 +225,50 @@ enum OrderClient {
     }
 
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
-        // 实验：完全照「调试 · 京东订单页」那条能出订单的路走——
-        // 同一个 cookie store、默认 UA、不注入、不写 Cookie 头。
+        // 三路 UA 对照实验：同一个 URL、同一个 WebView cookie store，只换 User-Agent。
+        // 目的：判断京东 PC 列表页判「未登录」到底是因为 cookie 无效，还是因为 UA 不对。
         _ = cookie
-        return try await fetchWebOrders(
-            platform: .jd,
-            cookie: "",
-            urls: ["https://order.jd.com/center/list.action"],
-            seconds: 14,
-            readyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
-        )
+        let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+        let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        guard let url = URL(string: "https://order.jd.com/center/list.action") else { throw FetchError.badURL }
+        let trials: [(String, String?)] = [("桌面UA", desktopUA), ("默认UA", nil), ("手机UA", mobileUA)]
+        var lines: [String] = []
+        var best: WebOrderFetcher.Capture?
+        var orders: [Order] = []
+        for (name, ua) in trials {
+            do {
+                let cap = try await WebOrderFetcher.shared.capture(
+                    platform: .jd,
+                    urls: [url],
+                    cookieHeader: "",
+                    seconds: 10,
+                    clickTabs: false,
+                    stopOnEntries: false,
+                    userAgent: ua,
+                    slot: "jd-ua"
+                )
+                let one = TaobaoJdParser.parse(platform: .jd, text: cap.text, payloadJSON: cap.payloadJSON)
+                if one.count > orders.count {
+                    orders = one
+                    best = cap
+                }
+                let head = cap.text.prefix(26).replacingOccurrences(of: "\n", with: " ")
+                lines.append("\(name)→「\(cap.title)」\(cap.text.count)字·订单\(one.count)｜\(head)")
+            } catch {
+                lines.append("\(name)→失败")
+            }
+        }
+        let note = "京东UA对照：" + lines.joined(separator: "；")
+        if let best {
+            return FetchOutcome(
+                orders: orders,
+                httpStatus: best.httpStatus,
+                byteCount: best.byteCount,
+                rawFileURL: best.rawFileURL,
+                note: note
+            )
+        }
+        throw FetchError.note(note)
     }
 
     /// 淘宝 / 京东：都是前端渲染，用同一个 WebView 抓包路线，只是地址和解析器不同。
