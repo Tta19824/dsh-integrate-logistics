@@ -364,13 +364,12 @@ struct WebPageSheet: View {
 
     private var url: URL {
         if let custom = Platform.manualWebURL(platform), let u = URL(string: custom) { return u }
-        if let u = URL(string: platform.loginURL) { return u }
-        return URL(string: "https://www.jd.com/")!
+        return platform.loginURL
     }
 
     var body: some View {
         NavigationStack {
-            WebView(url: url.absoluteString, desktop: platform == .pdd || platform == .jd)
+            WebView(url: url, desktop: platform == .pdd || platform == .jd)
                 .ignoresSafeArea(edges: .bottom)
                 .navigationTitle(platform.name)
                 .navigationBarTitleDisplayMode(.inline)
