@@ -331,6 +331,22 @@ final class WebOrderFetcher: NSObject {
     }
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
+    /// 在已有的京东页里直接调接口（借页面的环境，避免自己重放被 601 拒绝）
+    func inPageFetch(_ url: String) async -> String {
+        guard let wv = slots["list-jd"] ?? slots["main"] ?? slots.values.first else { return "没有可用的 WebView" }
+        let js = """
+        const r = await fetch(String(u), { credentials: 'include' });
+        const t = await r.text();
+        return r.status + '|' + t.length + '|' + t.slice(0, 180);
+        """
+        do {
+            let v = try await wv.callAsyncJavaScript(js, arguments: ["u": url], in: nil, contentWorld: .page)
+            return (v as? String) ?? "nil"
+        } catch {
+            return "ERR " + error.localizedDescription
+        }
+    }
+
     func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true,
         clickTexts: [String] = [], minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil, readyJS: String? = nil, slot: String = "main", referer: String? = nil, clickReadyJS: String? = nil) async throws -> Capture {
         let wv = slots[slot] ?? makeWebView(slot: slot)

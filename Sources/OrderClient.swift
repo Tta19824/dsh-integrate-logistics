@@ -322,6 +322,17 @@ enum OrderClient {
         }
         let htmlErr = write(capture.html, to: htmlFile(for: platform))
         let digestErr = write(capture.digest, to: digestFile(for: platform))
+        var jdProbeLine = ""
+        if platform == .jd, let req = JdDirect.findRequest(in: capture.payloadJSON) {
+            let fresh = req.url.replacingOccurrences(
+                of: #"(?<=[?&])t=\d+"#,
+                with: "t=\(Int(Date().timeIntervalSince1970 * 1000))",
+                options: .regularExpression
+            )
+            let probed = await WebOrderFetcher.shared.inPageFetch(fresh)
+            jdProbeLine = "；页内直取：\(probed)"
+            _ = write("URL: \(fresh)\n\n\(probed)", to: jdInPageFile())
+        }
         info.writeError = [pageErr, payloadErr, htmlErr, digestErr].compactMap { $0 }.joined(separator: " / ")
 
         if let data = capture.payloadJSON.data(using: .utf8),
@@ -355,6 +366,7 @@ enum OrderClient {
             note += "；页面开头：\(info.snippet.prefix(50))"
         }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
+        note += jdProbeLine
         note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
 
         return FetchOutcome(
@@ -664,6 +676,7 @@ enum OrderClient {
         case .jd:
             list.append(DebugFile(id: "jddetail-\(platform.rawValue)", label: "订单详情页", url: jdDetailFile(for: platform)))
             list.append(DebugFile(id: "jdreq-\(platform.rawValue)", label: "直连请求", url: JdDirect.requestFile()))
+            list.append(DebugFile(id: "jdinpage", label: "页内直取", url: jdInPageFile()))
         }
         return list.filter { FileManager.default.fileExists(atPath: $0.url.path) }
     }
