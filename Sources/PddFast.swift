@@ -22,6 +22,9 @@ enum PddFast {
     static func save(fromPayload payloadJSON: String) -> Bool {
         guard let data = payloadJSON.data(using: .utf8),
               let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return false }
+        // 页面上会先后发好几次 order_list（默认全部 / 待发货 / 待收货），
+        // 用户关心的是最后那个 tab 的结果，所以留最后一条。
+        var picked: Saved?
         for entry in entries {
             guard let raw = entry["r"] as? [String: Any] else { continue }
             let url = (raw["u"] as? String) ?? ""
@@ -30,19 +33,17 @@ enum PddFast {
             if let h = raw["h"] as? [String: Any] {
                 for (k, v) in h { headers[k] = String(describing: v) }
             }
-            let saved = Saved(
+            picked = Saved(
                 url: url,
                 method: (raw["m"] as? String) ?? "POST",
                 body: (raw["d"] as? String) ?? "",
                 headers: headers,
                 savedAt: Date().timeIntervalSince1970
             )
-            if let encoded = try? JSONEncoder().encode(saved) {
-                try? encoded.write(to: file(), options: .atomic)
-                return true
-            }
         }
-        return false
+        guard let saved = picked, let encoded = try? JSONEncoder().encode(saved) else { return false }
+        try? encoded.write(to: file(), options: .atomic)
+        return true
     }
 
     static func load() -> Saved? {

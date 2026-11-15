@@ -329,7 +329,9 @@ enum OrderClient {
                result.text.contains("order_sn") {
                 let payload = PddFast.payloadJSON(url: saved.url, body: result.text)
                 var fastOrders = attachLogistics(PinduoduoParser.parse(text: "", payloadJSON: payload), payloadJSON: payload)
-                if !fastOrders.isEmpty {
+                // 只回放回来已完成的单（说明存的不是“待收货”那一页）时，当作失败，回退 WebView
+                let hasActive = fastOrders.contains { $0.status == .paid || $0.status == .shipped }
+                if !fastOrders.isEmpty && hasActive {
                     fastOrders = await enrichShipping(fastOrders, cookie: cookie)
                     _ = self.write(payload, to: self.payloadFile(for: .pdd))
                     let pickupCount = fastOrders.filter { !$0.pickupCode.isEmpty }.count

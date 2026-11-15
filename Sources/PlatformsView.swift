@@ -285,6 +285,13 @@ struct PlatformRow: View {
                 if app.busy == platform {
                     ProgressView().scaleEffect(0.8)
                 }
+
+                Toggle("", isOn: Binding(
+                    get: { !app.isDisabled(platform) },
+                    set: { app.setDisabled(platform, !$0) }
+                ))
+                .labelsHidden()
+                .scaleEffect(0.8)
             }
 
             HStack(spacing: 10) {

@@ -10,6 +10,8 @@ final class AppState: ObservableObject {
     @Published var lastMessageAt: Date?
     /// 平台页用来排障：轨迹库有几行、最近写了什么
     @Published var traceInfo: String = ""
+    /// 不参与“刷新全部”的平台（存在 UserDefaults，重启后保留）
+    @Published var disabledPlatforms: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "disabled_platforms") ?? [])
     /// 最近一次后台补抓做了什么
     @Published var enrichInfo: String = ""
 
@@ -20,6 +22,13 @@ final class AppState: ObservableObject {
     func reload() {
         orders = OrderStore.shared.all()
         traceInfo = OrderStore.shared.traceDebug()
+    }
+
+    func isDisabled(_ platform: Platform) -> Bool { disabledPlatforms.contains(platform.rawValue) }
+
+    func setDisabled(_ platform: Platform, _ value: Bool) {
+        if value { disabledPlatforms.insert(platform.rawValue) } else { disabledPlatforms.remove(platform.rawValue) }
+        UserDefaults.standard.set(Array(disabledPlatforms), forKey: "disabled_platforms")
     }
 
     func isLoggedIn(_ platform: Platform) -> Bool {
@@ -132,7 +141,7 @@ final class AppState: ObservableObject {
 
     func refreshAll(quiet: Bool = false) {
         // 京东先断开：抓取路径还没跑通，留着会让每次刷新多花几十秒
-        let platforms = Platform.allCases.filter { isLoggedIn($0) }
+        let platforms = Platform.allCases.filter { isLoggedIn($0) && !disabledPlatforms.contains($0.rawValue) }
         guard !platforms.isEmpty else {
             show("还没有登录任何平台，先去「平台」页登录")
             return
