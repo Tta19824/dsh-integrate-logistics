@@ -87,7 +87,8 @@ enum TbFast {
             guard status == 200 else {
                 return Result(note: "淘宝直连：HTTP \(status) · \(body.count) 字节")
             }
-            let wrapped = "[{\"u\":\"mtop.order.queryboughtlistv2\",\"b\":\(jsonString(body))}]"
+            // 解析器要求 entry["b"] 是「响应体字符串」，所以这里用 JSONSerialization 做转义，不能直接嵌对象
+            let wrapped = wrap(body)
             let orders = TaobaoJdParser.parseTaobaoBoughtList(payloadJSON: wrapped)
             if orders.isEmpty {
                 let head = body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(70).replacingOccurrences(of: "\n", with: " ")
@@ -103,13 +104,11 @@ enum TbFast {
         }
     }
 
-    /// 把响应体转成可以嵌进 JSON 的字符串字面量（用于复用既有解析器）
-    static func jsonString(_ body: String) -> String {
-        if let data = body.data(using: .utf8),
-           let obj = try? JSONSerialization.jsonObject(with: data),
-           let re = try? JSONSerialization.data(withJSONObject: obj) {
-            return String(data: re, encoding: .utf8) ?? "{}"
-        }
-        return "{}"
+    /// 把响应体包成解析器认识的格式：[{ "u": "...", "b": "<响应体字符串>" }]
+    static func wrap(_ body: String) -> String {
+        let entry: [String: Any] = ["u": "mtop.order.queryboughtlistv2", "b": body]
+        guard let data = try? JSONSerialization.data(withJSONObject: [entry]),
+              let text = String(data: data, encoding: .utf8) else { return "[]" }
+        return text
     }
 }
