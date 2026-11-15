@@ -332,6 +332,11 @@ final class WebOrderFetcher: NSObject {
 
     /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
     /// 在已有的京东页里直接调接口（借页面的环境，避免自己重放被 601 拒绝）
+    /// 用完就把这个槽位的 WebView 释放掉，别一直占着内存
+    func releaseSlot(_ name: String) {
+        slots[name] = nil
+    }
+
     func inPageFetch(_ url: String) async -> String {
         guard let wv = slots["list-jd"] ?? slots["main"] ?? slots.values.first else { return "没有可用的 WebView" }
         let js = """

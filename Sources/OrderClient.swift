@@ -328,8 +328,16 @@ enum OrderClient {
             let reqs = TaobaoJdParser.extractMtopRequests(payloadJSON: capture.payloadJSON) ?? ""
             _ = write(reqs, to: tbListRequestsFile(for: .tb))
         }
-        let htmlErr = write(capture.html, to: htmlFile(for: platform))
+        // 京东电脑版整页 1MB 以上，只留前 40 万字，省内存也够排查
+        var htmlToWrite = capture.html
+        if platform == .jd, htmlToWrite.count > 400_000 {
+            htmlToWrite = String(htmlToWrite.prefix(400_000)) + "\n<!-- 截断 -->"
+        }
+        let htmlErr = write(htmlToWrite, to: htmlFile(for: platform))
         let digestErr = write(capture.digest, to: digestFile(for: platform))
+        if platform == .jd {
+            WebOrderFetcher.shared.releaseSlot("list-jd")
+        }
         var jdProbeLine = ""
         if platform == .jd, let req = JdDirect.findRequest(in: capture.payloadJSON) {
             let fresh = req.url.replacingOccurrences(

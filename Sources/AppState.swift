@@ -54,6 +54,9 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// 刚登录完不要立刻自动刷新（京东那页太大，容易把内存顶爆）
+    private var suppressAutoRefreshUntil = Date.distantPast
+
     /// 从 WebView 里把 cookie 捞出来存进钥匙串。
     func finishLogin(_ platform: Platform) {
         CookieStore.extractFromWebView(for: platform) { header in
@@ -65,6 +68,7 @@ final class AppState: ObservableObject {
                 } else {
                     self.show("\(platform.name)：没读到 cookie，可能还没登录成功")
                 }
+                self.suppressAutoRefreshUntil = Date().addingTimeInterval(120)
                 self.reload()
             }
         }
@@ -132,6 +136,7 @@ final class AppState: ObservableObject {
     /// 打开 App / 回到前台时，如果数据已经旧了就在后台刷一次：
     /// 用户看到的是「已经好的列表」，而不是等 7 秒的转圈。
     func autoRefreshIfStale(minutes: Int = 3) {
+        if Date() < suppressAutoRefreshUntil { return }
         guard busy == nil else { return }
         let last = UserDefaults.standard.double(forKey: "last_refresh_at")
         let age = Date().timeIntervalSince1970 - last

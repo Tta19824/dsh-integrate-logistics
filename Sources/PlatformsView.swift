@@ -11,8 +11,7 @@ struct PlatformsView: View {
 
     /// 京东手机版可能的订单列表页，逐个试，看哪个真出「订单号」。
     static let jdPages: [(name: String, url: String)] = [
-        ("order.m.jd.com/orderList/1", "https://order.m.jd.com/orderList/1"),
-        ("order.m.jd.com/orderList/1?sceneval=2", "https://order.m.jd.com/orderList/1?sceneval=2"),
+                ("order.m.jd.com/orderList/1?sceneval=2", "https://order.m.jd.com/orderList/1?sceneval=2"),
         ("wq.jd.com/order/orderlist", "https://wq.jd.com/order/orderlist?sceneval=2"),
         ("home.m.jd.com/myOrders.action", "https://home.m.jd.com/myOrders/myOrders.action"),
         ("m.jd.com/order/orderList.action", "https://m.jd.com/order/orderList.action"),
