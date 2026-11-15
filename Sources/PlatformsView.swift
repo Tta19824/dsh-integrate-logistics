@@ -53,12 +53,6 @@ struct PlatformsView: View {
                         }
                     }
 
-                    let allFiles = Platform.allCases.flatMap { OrderClient.debugFiles(for: $0) }
-                    if !allFiles.isEmpty {
-                        ShareLink(items: allFiles.map { $0.url }) {
-                            Text("分享全部调试文件（\(allFiles.count) 个）")
-                        }
-                    }
 
                     Button(role: .destructive) {
                         OrderStore.shared.deleteAll()
@@ -70,7 +64,7 @@ struct PlatformsView: View {
                 } header: {
                     Text("调试 · 抓取文件")
                 } footer: {
-                    Text("只列已经生成的。点单行分享一个文件；点「分享全部」一次性发出去（微信 → 文件传输助手）。")
+                    Text("只列已经生成的。点一行分享一个文件，微信一次只能发一个。")
                 }
 
                 Section {

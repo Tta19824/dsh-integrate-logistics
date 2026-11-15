@@ -188,30 +188,20 @@ enum OrderClient {
 
     private static func fetchTaobao(cookie: String) async throws -> FetchOutcome {
         let started = Date()
-        var fastFail = ""
-        // 快路：PC 订单页是按登录态 SSR 的，带 cookie 直接请求就有订单，不用开 WebView。
-        if cookie.isEmpty {
-            fastFail = "；直连HTML 跳过（没 cookie）"
-        } else if let html = await TaobaoListHTML.rawHTML(cookieHeader: cookie) {
-            try? html.data(using: .utf8)?.write(to: tbListRawFile(for: .tb), options: .atomic)
-            let text = HTMLTools.strip(html)
-            let direct = TaobaoJdParser.parsePcText(platform: .tb, text: text)
-            if !direct.isEmpty {
-                let note = String(format: "直连HTML %d 条订单 · 用时 %.1f 秒", direct.count, Date().timeIntervalSince(started))
-                return FetchOutcome(
-                    orders: direct,
-                    httpStatus: 200,
-                    byteCount: html.count,
-                    rawFileURL: tbListRawFile(for: .tb),
-                    note: note
-                )
-            }
-            let hits = text.components(separatedBy: "订单号").count - 1
-            let head = text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40).replacingOccurrences(of: "\n", with: " ")
-            fastFail = "；直连HTML \(TaobaoListHTML.lastMeta) · 订单号 \(hits) 处 · 开头「\(head)」"
-        } else {
-            fastFail = "；直连HTML 请求失败"
+        // 快路：页面是 React 空壳，订单来自 mtop queryboughtlistV2；我们自己算 sign 直接请求。
+        let fast = await TbFast.fetch(cookie: cookie)
+        if !fast.orders.isEmpty {
+            let note = String(format: "%@ · 用时 %.1f 秒", fast.note, Date().timeIntervalSince(started))
+            return FetchOutcome(
+                orders: fast.orders,
+                httpStatus: 200,
+                byteCount: 0,
+                rawFileURL: payloadFile(for: .tb),
+                note: note
+            )
         }
+        let fastFail = "；" + fast.note
+        // 慢路：真渲染，兜底用。
         let slow = try await fetchWebOrders(
             platform: .tb,
             cookie: cookie,
