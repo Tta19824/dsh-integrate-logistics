@@ -58,31 +58,38 @@ enum JdFast {
         return "存档 \(list.count) 份 · \(host) · 参数 \(bodyLen) 字节 · \(mins) 分钟前"
     }
 
-    /// 逐份重放，返回第一个能解析出订单的 payloadJSON（供 TaobaoJdParser 复用）
-    static func replay(cookie: String) async -> String? {
-        for saved in loadAll() {
+    /// 逐份重放，返回 (payloadJSON, 诊断)
+    static func replay(cookie: String) async -> (wrapped: String?, note: String) {
+        let list = loadAll()
+        guard !list.isEmpty else { return (nil, "；快路：无存档") }
+        var detail: [String] = []
+        for (idx, saved) in list.enumerated() {
             guard let url = URL(string: saved.url) else { continue }
             var req = URLRequest(url: url)
-            req.timeoutInterval = 10
+            req.timeoutInterval = 8
             req.setValue(cookie, forHTTPHeaderField: "Cookie")
             var ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
             for (k, v) in saved.headers {
                 let lower = k.lowercased()
-                if v.contains("$") { continue }   // 浏览器占位值，别原样发
+                if v.contains("$") { continue }
                 if lower == "cookie" || lower == "content-length" || lower == "host" { continue }
                 if lower == "user-agent" { ua = v; continue }
                 req.setValue(v, forHTTPHeaderField: k)
             }
             req.setValue(ua, forHTTPHeaderField: "User-Agent")
             req.setValue("https://my.m.jd.com/", forHTTPHeaderField: "Referer")
-            guard let (data, resp) = try? await URLSession.shared.data(for: req),
-                  let http = resp as? HTTPURLResponse, http.statusCode == 200,
-                  let body = String(data: data, encoding: .utf8),
-                  body.contains("orderList") else { continue }
-            let wrapped = "[{\"u\":\"\(saved.url)\",\"b\":\(jsonQuoted(body))}]"
-            return wrapped
+            guard let (data, resp) = try? await URLSession.shared.data(for: req) else {
+                detail.append("网络失败")
+                continue
+            }
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            let body = String(data: data, encoding: .utf8) ?? ""
+            if code != 200 { detail.append("HTTP" + String(code)); continue }
+            if !body.contains("orderList") { detail.append(String(data.count) + "B无orderList"); continue }
+            let wrapped = "[{" + jsonQuoted("u") + ":" + jsonQuoted(saved.url) + "," + jsonQuoted("b") + ":" + jsonQuoted(body) + "}]"
+            return (wrapped, "；快路：第 " + String(idx + 1) + "/" + String(list.count) + " 份重放成功")
         }
-        return nil
+        return (nil, "；快路：" + detail.joined(separator: "/"))
     }
 
     private static func jsonQuoted(_ s: String) -> String {

@@ -247,14 +247,16 @@ enum OrderClient {
         let started = Date()
         var fastNote = ""
         // 快路：重放上次存下的已签名请求（拼多多同款思路）
-        if let wrapped = await JdFast.replay(cookie: cookie) {
+        let fast = await JdFast.replay(cookie: cookie)
+        fastNote = fast.note
+        if let wrapped = fast.wrapped {
             let fastOrders = TaobaoJdParser.parse(platform: .jd, text: "", payloadJSON: wrapped)
             if !fastOrders.isEmpty {
                 let cost = String(format: "%.1f", Date().timeIntervalSince(started))
                 return FetchOutcome(orders: fastOrders, httpStatus: 200, byteCount: wrapped.count, rawFileURL: nil,
                                     note: "京东直连 \(fastOrders.count) 条订单 · 用时 \(cost) 秒")
             }
-            fastNote = "；快路：重放没解析出订单"
+            fastNote = "；快路：重放成功但解析 0 条"
         }
         let out = try await fetchWebOrders(
             platform: .jd,
