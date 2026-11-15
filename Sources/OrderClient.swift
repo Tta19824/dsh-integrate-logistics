@@ -309,10 +309,6 @@ enum OrderClient {
             note += "；页面开头：\(info.snippet.prefix(50))"
         }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
-        if platform == .pdd, !capture.payloadJSON.isEmpty {
-            let pddLine = await PddDirect.probe(payloadJSON: capture.payloadJSON, cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader)
-            note += "；" + pddLine
-        }
         note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
 
         return FetchOutcome(
@@ -326,6 +322,29 @@ enum OrderClient {
 
     private static func fetchPinduoduo(cookie: String) async throws -> FetchOutcome {
         let started = Date()
+
+        // 快路：之前已经抓到过 order_list 请求，直接重放，不用开 WebView
+        if !cookie.isEmpty, let saved = PddFast.load() {
+            if let result = await PddFast.replay(saved, cookie: cookie), result.status == 200,
+               result.text.contains("order_sn") {
+                let payload = PddFast.payloadJSON(url: saved.url, body: result.text)
+                var fastOrders = attachLogistics(PinduoduoParser.parse(text: "", payloadJSON: payload), payloadJSON: payload)
+                if !fastOrders.isEmpty {
+                    fastOrders = await enrichShipping(fastOrders, cookie: cookie)
+                    _ = self.write(payload, to: self.payloadFile(for: .pdd))
+                    let pickupCount = fastOrders.filter { !$0.pickupCode.isEmpty }.count
+                    let note = String(format: "直连重放 %d 条订单，取件码 %d 单 · 用时 %.1f 秒",
+                                      fastOrders.count, pickupCount, Date().timeIntervalSince(started))
+                    return FetchOutcome(
+                        orders: fastOrders,
+                        httpStatus: 200,
+                        byteCount: result.text.count,
+                        rawFileURL: self.payloadFile(for: .pdd),
+                        note: note
+                    )
+                }
+            }
+        }
         let candidates = [
             "https://mobile.pinduoduo.com/order.html",
             "https://mobile.yangkeduo.com/orders.html"
@@ -388,6 +407,9 @@ enum OrderClient {
         // 列表页上没有取件码，直接按订单号问物流接口（只问还在路上的那几单）
         orders = await enrichShipping(orders, cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader)
 
+        // 把这次抓到的 order_list 请求存起来，下次直接用 URLSession 重放
+        _ = PddFast.save(fromPayload: capture.payloadJSON)
+
         let pickupCount = orders.filter { !$0.pickupCode.isEmpty }.count
         var note = info.entryCount > 0
             ? "抓到 \(info.entryCount) 个接口响应，解析出 \(orders.count) 条订单，取件码 \(pickupCount) 单"
@@ -395,12 +417,6 @@ enum OrderClient {
         if orders.isEmpty, !info.snippet.isEmpty { note += "；页面开头：\(info.snippet.prefix(60))" }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
         note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
-
-        // 直连实验：把刚抓到的 order_list 请求原样重放，看服务端认不认
-        if !capture.payloadJSON.isEmpty {
-            let pddLine = await PddDirect.probe(payloadJSON: capture.payloadJSON, cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader)
-            note += "；" + pddLine
-        }
 
         return FetchOutcome(
             orders: orders,
