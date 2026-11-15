@@ -372,7 +372,8 @@ final class WebOrderFetcher: NSObject {
     /// 好处：cookie、UA、签名参数都由页面自己带，不用我们把凭证搬来搬去。
     /// 返回 "status|body"，没有可用页面或没有匹配请求时返回 nil。
     func inPageReplay(slot: String, urlContains: String) async -> String? {
-        guard let wv = slots[slot], wv.url != nil else { return nil }
+        guard let wv = slots[slot] else { return "NOPAGE" }
+        guard wv.url != nil else { return "NOURL" }
         let js = """
         var key = args.key;
         var caps = window.__dshCap || [];
@@ -393,10 +394,10 @@ final class WebOrderFetcher: NSObject {
         """
         do {
             let v = try await wv.callAsyncJavaScript(js, arguments: ["key": urlContains], in: nil, in: .page)
-            guard let s = v as? String, s != "NONE", !s.hasPrefix("ERR") else { return nil }
+            guard let s = v as? String else { return "NOTSTRING" }
             return s
         } catch {
-            return nil
+            return "ERR " + error.localizedDescription
         }
     }
 
