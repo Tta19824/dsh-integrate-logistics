@@ -336,7 +336,7 @@ enum OrderClient {
         let htmlErr = write(htmlToWrite, to: htmlFile(for: platform))
         let digestErr = write(capture.digest, to: digestFile(for: platform))
         if platform == .jd {
-            WebOrderFetcher.shared.releaseSlot("list-jd")
+            await WebOrderFetcher.shared.releaseSlot("list-jd")
         }
         var jdProbeLine = ""
         if platform == .jd, let req = JdDirect.findRequest(in: capture.payloadJSON) {
