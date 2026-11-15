@@ -238,6 +238,9 @@ enum OrderClient {
 
     /// 京东：手机版 my.m.jd.com → 自动点「全部订单」→ 读页面文本。
     /// 这是 0.19.6/0.19.7 验证过能出 10 单的那条路（需要手机版登录的 pt_key）。
+    static func jdListHTMLFile() -> URL { rawDirectory().appendingPathComponent("jd_list.html") }
+    static func jdListTextFile() -> URL { rawDirectory().appendingPathComponent("jd_list.txt") }
+
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
         guard !cookie.isEmpty else { throw FetchError.noCookie }
         let started = Date()
