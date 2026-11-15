@@ -229,7 +229,7 @@ enum OrderClient {
         guard !cookie.isEmpty else { return (nil, "") }
         let started = Date()
         let (status, html) = await JdDirect.fetchOrderListHTML(cookie: cookie)
-        guard status == 200, html.count > 2000 else { return nil }
+        guard status == 200, html.count > 2000 else { return (nil, "京东直连HTML HTTP\(status)·\(html.count)字节") }
         let text = HTMLTools.strip(html)
         let parsed = TaobaoJdParser.parse(platform: .jd, text: text, payloadJSON: "")
         let cost = String(format: "%.1f", Date().timeIntervalSince(started))
