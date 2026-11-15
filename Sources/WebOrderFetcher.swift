@@ -319,7 +319,7 @@ final class WebOrderFetcher: NSObject {
     func warmUp(url: URL, cookieHeader: String) async {
         let wv = slots["pdd"] ?? makeWebView(slot: "pdd")
         webView = wv
-        await prefillCookies(cookieHeader)
+        await prefillCookies(cookieHeader, platform: platform, force: platform == .jd)
         var request = URLRequest(url: url)
         request.setValue(
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
@@ -616,7 +616,7 @@ final class WebOrderFetcher: NSObject {
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 
-    private func prefillCookies(_ header: String) async {
+    private func prefillCookies(_ header: String, platform: Platform = .pdd, force: Bool = false) async {
         guard !header.isEmpty else { return }
         let store = WKWebsiteDataStore.default().httpCookieStore
         let existing = await withCheckedContinuation { (cont: CheckedContinuation<[HTTPCookie], Never>) in
@@ -624,7 +624,12 @@ final class WebOrderFetcher: NSObject {
         }
         var existingNames = Set(existing.map { $0.name })
         let pairs = header.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
-        let domains = [".pinduoduo.com", ".yangkeduo.com"]
+        let domains: [String]
+        switch platform {
+        case .pdd: domains = [".pinduoduo.com", ".yangkeduo.com"]
+        case .tb: domains = [".taobao.com", ".tmall.com"]
+        case .jd: domains = [".jd.com", ".360buy.com"]
+        }
         for pair in pairs {
             let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
             guard parts.count == 2 else { continue }
