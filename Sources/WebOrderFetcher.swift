@@ -322,7 +322,31 @@ final class WebOrderFetcher: NSObject {
         let wv = slots["pdd"] ?? makeWebView(slot: "pdd")
         webView = wv
         await prefillCookies(cookieHeader, platform: platform, force: platform == .jd)
-catch {
+        var request = URLRequest(url: url)
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            forHTTPHeaderField: "User-Agent"
+        )
+        _ = try? await wv.load(request)
+        warmURL = url
+        warmAt = Date()
+    }
+
+    /// 在已登录的页面里直接发一次请求（页面自己带 cookie，不需要我们把凭证搬来搬去）
+    func inPageFetch(_ url: String) async -> String {
+        guard let wv = slots["list-jd"] else { return "没有京东页面（跳过）" }
+        let js = """
+        var u = args.url;
+        return fetch(u, { credentials: 'include' }).then(function (r) {
+            return r.text().then(function (t) {
+                return String(r.status) + '|' + String(t.length) + '|' + t.slice(0, 180);
+            });
+        }).catch(function (e) { return 'ERR ' + e.message; });
+        """
+        do {
+            let v = try await wv.callAsyncJavaScript(js, arguments: ["url": url], in: nil, in: .page)
+            return (v as? String) ?? ""
+        } catch {
             return "ERR " + error.localizedDescription
         }
     }
