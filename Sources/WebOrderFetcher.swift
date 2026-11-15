@@ -451,12 +451,12 @@ final class WebOrderFetcher: NSObject {
                     _ = try? await wv.evaluateJavaScript(self.clickTabJS([wanted]))
                     if let clickReadyJS {
                         var ready = false
-                        for _ in 0..<24 {
+                        for _ in 0..<4 {
+                            try? await Task.sleep(nanoseconds: 1_000_000_000)
                             let flag = (try? await wv.evaluateJavaScript(clickReadyJS)) as? String ?? "0"
                             if flag == "1" { ready = true; break }
-                            try? await Task.sleep(nanoseconds: 250_000_000)
                         }
-                        if !ready { try? await Task.sleep(nanoseconds: 600_000_000) }
+                        if !ready { try? await Task.sleep(nanoseconds: 800_000_000) }
                     } else {
                         try? await Task.sleep(nanoseconds: 2_200_000_000)
                     }

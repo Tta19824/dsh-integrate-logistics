@@ -34,7 +34,7 @@ enum PddDirect {
     /// 重放并返回一行结果
     static func probe(payloadJSON: String, cookie: String) async -> String {
         guard let req = findRequest(in: payloadJSON) else {
-            return "直连探测：没找到拼多多订单请求"
+            return "直连探测：没找到订单请求（" + describe(payloadJSON: payloadJSON) + "）"
         }
         guard let url = URL(string: req.url) else { return "直连探测：URL 非法" }
         var r = URLRequest(url: url)
@@ -72,6 +72,39 @@ enum PddDirect {
         } catch {
             return "拼多多直连：失败 \(error.localizedDescription)"
         }
+    }
+
+    /// 找不到请求时，把「抓到了什么」说清楚：多少条、有几条含 order_list、有没有带上请求信息
+    static func describe(payloadJSON: String) -> String {
+        guard let data = payloadJSON.data(using: .utf8),
+              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return "payload 解析失败"
+        }
+        var withOrderList = 0
+        var withReq = 0
+        var urls: [String] = []
+        for entry in entries {
+            let body = (entry["b"] as? String) ?? ""
+            if body.contains("order_list") { withOrderList += 1 }
+            if entry["r"] != nil { withReq += 1 }
+            if let u = entry["u"] as? String, !u.isEmpty { urls.append(hostPath(u)) }
+        }
+        var heads: [String] = []
+        for entry in entries {
+            let body = (entry["b"] as? String) ?? ""
+            if body.contains("order_list") {
+                if let raw = entry["r"] as? [String: Any] {
+                    heads.append("有 r，键：" + raw.keys.sorted().joined(separator: "/"))
+                } else {
+                    heads.append("无 r")
+                }
+            }
+        }
+        let sample = urls.suffix(6).joined(separator: " , ")
+        var line = "共 \(entries.count) 条，含 order_list \(withOrderList) 条，带请求信息 \(withReq) 条"
+        if !heads.isEmpty { line += "｜" + heads.prefix(2).joined(separator: "；") }
+        if !sample.isEmpty { line += "｜最近：" + sample }
+        return line
     }
 
     private static func hostPath(_ raw: String) -> String {
