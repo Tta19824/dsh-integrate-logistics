@@ -26,6 +26,8 @@ final class WebOrderFetcher: NSObject {
         var digest: String = "[]"
         /// 跟进的链接（「查看物流」点进去的那个地址），没跟进就是空
         var followedURL: String = ""
+        var storeCookieNames: [String] = []
+        var headerCookieNames: [String] = []
         /// 页面这次加载过的所有资源地址（performance timing），用来定位真正的接口
         var resources: String = "[]"
     }
@@ -320,6 +322,20 @@ final class WebOrderFetcher: NSObject {
         let wv = slots["pdd"] ?? makeWebView(slot: "pdd")
         webView = wv
         await prefillCookies(cookieHeader, platform: platform, force: platform == .jd)
+        let headerCookieNames = cookieHeader.split(separator: ";").compactMap { pair -> String? in
+            let name = pair.split(separator: "=", maxSplits: 1).first.map(String.init) ?? ""
+            let t = name.trimmingCharacters(in: .whitespaces)
+            return t.isEmpty ? nil : t
+        }
+        var storeCookieNames: [String] = []
+        if platform == .jd {
+            let all = await withCheckedContinuation { (cont: CheckedContinuation<[HTTPCookie], Never>) in
+                WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cont.resume(returning: $0) }
+            }
+            storeCookieNames = all.filter { ($0.domain.contains("jd.com") || $0.domain.contains("360buy.com")) }
+                .map { $0.name }
+                .sorted()
+        }
         var request = URLRequest(url: url)
         request.setValue(
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
@@ -505,6 +521,8 @@ final class WebOrderFetcher: NSObject {
                 html: html,
                 digest: digest,
                 followedURL: followed,
+                storeCookieNames: storeCookieNames,
+                headerCookieNames: headerCookieNames,
                 resources: resources
             )
             if stopOnEntries && Self.payloadEntryCount(payload) == 0 {

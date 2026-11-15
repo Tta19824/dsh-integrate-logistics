@@ -40,8 +40,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.abdd.orderpocket
         PRODUCT_NAME: OrderPocket
-        MARKETING_VERSION: 0.29.1
-        CURRENT_PROJECT_VERSION: 166
+        MARKETING_VERSION: 0.29.2
+        CURRENT_PROJECT_VERSION: 167
         TARGETED_DEVICE_FAMILY: "1"
         ENABLE_BITCODE: NO
 

@@ -338,7 +338,10 @@ enum OrderClient {
         let htmlErr = write(htmlToWrite, to: htmlFile(for: platform))
         let digestErr = write(capture.digest, to: digestFile(for: platform))
         if platform == .jd {
-            await WebOrderFetcher.shared.releaseSlot("list-jd")
+            let hdr = capture.headerCookieNames.joined(separator: ",")
+            let st = capture.storeCookieNames.joined(separator: ",")
+            note += "；凭证 [" + hdr + "]；WebView [" + st + "]"
+            // 京东保留 list-jd，页内直取要用它
         }
         var jdProbeLine = ""
         if platform == .jd, let req = JdDirect.findRequest(in: capture.payloadJSON) {
