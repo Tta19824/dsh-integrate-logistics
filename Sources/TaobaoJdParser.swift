@@ -915,6 +915,7 @@ enum TaobaoJdParser {
         var carrier = ""
         var tracking = ""
         var events: [ShipEvent] = []
+        var pickup = ""
     }
 
     /// 从淘宝「物流详情」页的页面文字里读快递公司、运单号和轨迹。
@@ -1000,6 +1001,34 @@ enum TaobaoJdParser {
             if desc.contains("展开更多") { continue }
 
             out.events.append(ShipEvent(id: out.events.count, time: trackTime, desc: desc))
+        }
+
+        // 取件码：驿站会给出 8-3-1024 这种编号，有的写作「取件码：8-3-1024」
+        if out.pickup.isEmpty {
+            let patterns = [
+                #"取件码[：: ]{0,3}([0-9]{1,3}[-－—–][0-9]{1,3}[-－—–][0-9]{2,5})"#,
+                #"取货码[：: ]{0,3}([0-9]{1,3}[-－—–][0-9]{1,3}[-－—–][0-9]{2,5})"#,
+                #"取件码[：: ]{0,3}([A-Za-z0-9]{2,12})"#
+            ]
+            for pattern in patterns {
+                guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+                let range = NSRange(text.startIndex..<text.endIndex, in: text)
+                if let match = regex.firstMatch(in: text, range: range),
+                   let valueRange = Range(match.range(at: 1), in: text) {
+                    out.pickup = String(text[valueRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    break
+                }
+            }
+        }
+        // 兜底：出现「驿站/代收点/快递柜」时，找孤立的 x-x-xxxx 编号
+        if out.pickup.isEmpty, text.contains("驿站") || text.contains("代收") || text.contains("快递柜") {
+            if let regex = try? NSRegularExpression(pattern: #"(?<![0-9\-])([0-9]{1,2}[-－][0-9]{1,2}[-－][0-9]{3,4})(?![0-9\-])"#) {
+                let range = NSRange(text.startIndex..<text.endIndex, in: text)
+                if let match = regex.firstMatch(in: text, range: range),
+                   let valueRange = Range(match.range(at: 1), in: text) {
+                    out.pickup = String(text[valueRange])
+                }
+            }
         }
 
         return out

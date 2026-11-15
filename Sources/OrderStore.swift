@@ -106,6 +106,21 @@ final class OrderStore {
         }
     }
 
+    func setPickup(orderNo: String, code: String) {
+        guard !code.isEmpty else { return }
+        queue.sync {
+            guard let db else { return }
+            var stmt: OpaquePointer?
+            let sql = "UPDATE orders SET pickup_code = ? WHERE order_no = ?;"
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, code, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, orderNo, -1, SQLITE_TRANSIENT)
+                sqlite3_step(stmt)
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
     func setTrace(orderNo: String, text value: String) {
         queue.sync {
             guard let db else { return }

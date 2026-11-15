@@ -608,6 +608,9 @@ struct LogisticsSheet: View {
         } else if !order.carrier.isEmpty {
             carrierLine = order.carrier
         }
+        if !best.pickup.isEmpty {
+            OrderStore.shared.setPickup(orderNo: order.orderNo, code: best.pickup)
+        }
         if !events.isEmpty {
             TraceCache.shared.put(cacheKey, TraceCache.Item(at: Date(), events: events, tracking: tracking, carrier: carrierLine))
             // 详情页抓到的东西也要落库：之前只有后台补抓会写 trace_summary，
