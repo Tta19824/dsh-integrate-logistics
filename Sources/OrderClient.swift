@@ -233,9 +233,13 @@ enum OrderClient {
         let text = HTMLTools.strip(html)
         let parsed = TaobaoJdParser.parse(platform: .jd, text: text, payloadJSON: "")
         let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+        // 落盘原始 HTML 与文本，供分析结构（直取已经能拿到登录态页面，只差解析）
+        try? html.data(using: .utf8)?.write(to: jdListHTMLFile(), options: .atomic)
+        try? text.data(using: .utf8)?.write(to: jdListTextFile(), options: .atomic)
+        let counts = "订单号×\(JdDirect.occurrences(of: "订单号", in: text))·订单编号×\(JdDirect.occurrences(of: "订单编号", in: text))·待收货×\(JdDirect.occurrences(of: "待收货", in: text))·已完成×\(JdDirect.occurrences(of: "已完成", in: text))·合计×\(JdDirect.occurrences(of: "实付款", in: text))"
         if parsed.isEmpty {
             let head = text.prefix(40).replacingOccurrences(of: "\n", with: " ")
-            return (nil, "京东直连HTML \(html.count)字·订单0｜\(head)")
+            return (nil, "京东直连HTML \(html.count)字·订单0·\(counts)｜\(head)")
         }
         return (FetchOutcome(orders: parsed, httpStatus: status, byteCount: html.count, rawFileURL: nil,
                              note: "京东直连HTML \(parsed.count) 条订单 · 用时 \(cost) 秒"), "")

@@ -122,7 +122,7 @@ enum JdDirect {
         return String(one.prefix(110))
     }
 
-    private static func occurrences(of needle: String, in haystack: String) -> Int {
+    static func occurrences(of needle: String, in haystack: String) -> Int {
         guard !needle.isEmpty else { return 0 }
         var count = 0
         var idx = haystack.startIndex
