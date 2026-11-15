@@ -371,7 +371,7 @@ final class WebOrderFetcher: NSObject {
     /// 在已经打开的页面里，把之前抓到的某条请求原样再发一次。
     /// 好处：cookie、UA、签名参数都由页面自己带，不用我们把凭证搬来搬去。
     /// 返回 "status|body"，没有可用页面或没有匹配请求时返回 nil。
-    func inPageReplay(slot: String, urlContains: String) async -> String? {
+    func inPageReplay(slot: String, urlContains: String) async -> String {
         guard let wv = slots[slot] else { return "NOPAGE" }
         guard wv.url != nil else { return "NOURL" }
         let js = """
