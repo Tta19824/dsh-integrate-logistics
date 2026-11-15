@@ -71,6 +71,10 @@ enum OrderClient {
 
     /// 订单详情页抓到的接口数据（排查店铺名用）
     /// 淘宝 / 京东订单页上的图片与时间摘要
+    static func jdInPageFile() -> URL {
+        rawDirectory().appendingPathComponent("jd_inpage.txt")
+    }
+
     static func digestFile(for platform: Platform) -> URL {
         rawDirectory().appendingPathComponent("digest_\(platform.rawValue).json")
     }
