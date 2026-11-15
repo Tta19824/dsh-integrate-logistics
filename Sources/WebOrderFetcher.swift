@@ -351,6 +351,38 @@ final class WebOrderFetcher: NSObject {
         }
     }
 
+    /// 在页面里发请求并拿回完整响应体（用来直取 JSON，不用等页面渲染）
+    func inPageFetchJSON(_ url: String) async -> String {
+        guard let wv = slots["list-jd"] else { return "ERR 没有京东页面" }
+        let js = """
+        var u = args.url;
+        return fetch(u, { credentials: 'include' }).then(function (r) {
+            return r.text().then(function (t) { return String(r.status) + '|' + t; });
+        }).catch(function (e) { return 'ERR ' + e.message; });
+        """
+        do {
+            let v = try await wv.callAsyncJavaScript(js, arguments: ["url": url], in: nil, in: .page)
+            return (v as? String) ?? "ERR 空返回"
+        } catch {
+            return "ERR " + error.localizedDescription
+        }
+    }
+
+    /// 保证 list-jd 这个槽里已经打开了京东页面（没有就打开并等加载完）
+    func ensureJdPage(cookieHeader: String, wait: Double = 6) async -> Bool {
+        if let wv = slots["list-jd"], let host = wv.url?.host, host.contains("jd.com") { return true }
+        let wv = slots["list-jd"] ?? makeWebView(slot: "list-jd")
+        await prefillCookies(cookieHeader, platform: .jd, force: true)
+        guard let url = URL(string: "https://my.m.jd.com/index.html?sceneval=2") else { return false }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                         forHTTPHeaderField: "User-Agent")
+        _ = await wv.load(request)
+        try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+        return true
+    }
+
     func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true,
         clickTexts: [String] = [], minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil, readyJS: String? = nil, slot: String = "main", referer: String? = nil, clickReadyJS: String? = nil) async throws -> Capture {
         let wv = slots[slot] ?? makeWebView(slot: slot)

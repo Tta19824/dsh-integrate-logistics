@@ -48,6 +48,9 @@ enum JdFast {
         saveAll(list)
     }
 
+    /// 最近一条存档的 URL（页内直取用）
+    static func lastURL() -> String? { loadAll().last?.url }
+
     static func statusText() -> String {
         let list = loadAll()
         guard !list.isEmpty else { return "无存档" }
@@ -91,6 +94,8 @@ enum JdFast {
         }
         return (nil, "；快路：" + detail.joined(separator: "/"))
     }
+
+    static func jsonQuotedPublic(_ s: String) -> String { jsonQuoted(s) }
 
     private static func jsonQuoted(_ s: String) -> String {
         if let data = try? JSONSerialization.data(withJSONObject: [s], options: []),

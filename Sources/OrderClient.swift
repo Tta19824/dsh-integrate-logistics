@@ -249,6 +249,33 @@ enum OrderClient {
         let started = Date()
         var fastNote = ""
         // 快路：重放上次存下的已签名请求（拼多多同款思路）
+        // 快路一：页内直取。用一个隐藏页面打开 my.m.jd.com，然后在页面里发那条已签名请求。
+        // 好处是 cookie、UA、来源、设备指纹都由页面自己带，不用我们伪造。
+        if let savedURL = JdFast.lastURL(), !savedURL.isEmpty {
+            let fresh = savedURL.replacingOccurrences(
+                of: #"(?<=[?&])t=\d+"#,
+                with: "t=\(Int(Date().timeIntervalSince1970 * 1000))",
+                options: .regularExpression
+            )
+            if await WebOrderFetcher.shared.ensureJdPage(cookieHeader: cookie) {
+                let raw = await WebOrderFetcher.shared.inPageFetchJSON(fresh)
+                if !raw.hasPrefix("ERR") {
+                    let parts = raw.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+                    if parts.count == 2, parts[0] == "200" {
+                        let body = String(parts[1])
+                        if body.contains("orderList") {
+                            let wrapped = "[{\"u\":\"\(savedURL)\",\"b\":\(JdFast.jsonQuotedPublic(body))}]"
+                            let orders = TaobaoJdParser.parse(platform: .jd, text: "", payloadJSON: wrapped)
+                            if !orders.isEmpty {
+                                let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+                                return FetchOutcome(orders: orders, httpStatus: 200, byteCount: body.count, rawFileURL: nil,
+                                                    note: "京东页内直取 \(orders.count) 条订单 · 用时 \(cost) 秒")
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let fast = await JdFast.replay(cookie: cookie)
         fastNote = fast.note
         if let wrapped = fast.wrapped {
