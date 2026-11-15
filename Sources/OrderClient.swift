@@ -323,34 +323,48 @@ enum OrderClient {
     private static func fetchPinduoduo(cookie: String) async throws -> FetchOutcome {
         let started = Date()
 
-        // 快路：之前已经抓到过 order_list 请求，直接重放，不用开 WebView
+        // 快路：之前抓到过 order_list 请求，直接重放，不开 WebView。
+        // 页面会发好几条（默认/待发货/待收货），有的返回空列表，所以逐份试。
         var fastNote = ""
         if cookie.isEmpty {
             fastNote = "快路：没有 cookie"
-        } else if let saved = PddFast.load() {
-            if let result = await PddFast.replay(saved, cookie: cookie) {
-                if result.status != 200 {
-                    fastNote = "快路：重放 HTTP \(result.status)"
-                } else if !result.text.contains("order_sn") {
-                    fastNote = "快路：重放 \(result.text.count) 字节但没有 order_sn"
-                }
-                // 把这次重放的原文存下来，解析不出来时可以直接看
-                _ = self.write(result.text, to: PddFast.responseFile())
-                let payload = PddFast.payloadJSON(url: saved.url, body: result.text)
-                var fastOrders = attachLogistics(PinduoduoParser.parse(text: "", payloadJSON: payload), payloadJSON: payload)
-                if fastOrders.isEmpty {
-                    let head = result.text.prefix(50).replacingOccurrences(of: "\n", with: " ")
-                    fastNote = "快路：重放 \(result.text.count) 字节 · 解析 0 条 · 开头「\(head)」"
-                }
-                // 只回放回来已完成的单（说明存的不是“待收货”那一页）时，当作失败，回退 WebView
-                let hasActive = fastOrders.contains { $0.status == .paid || $0.status == .shipped }
-                if !hasActive && !fastOrders.isEmpty { fastNote = "快路：重放 \(fastOrders.count) 条但都不是待发货/待收货" }
-                if !fastOrders.isEmpty && hasActive {
+        } else {
+            let saves = PddFast.loadAll()
+            if saves.isEmpty {
+                fastNote = "快路：无存档"
+            } else {
+                for (index, saved) in saves.enumerated() {
+                    guard let result = await PddFast.replay(saved, cookie: cookie) else {
+                        fastNote = "快路：第 \(index + 1) 份重放失败（网络）"
+                        continue
+                    }
+                    if result.status != 200 {
+                        fastNote = "快路：第 \(index + 1) 份重放 HTTP \(result.status)"
+                        continue
+                    }
+                    _ = self.write(result.text, to: PddFast.responseFile())
+                    if !result.text.contains("order_sn") {
+                        fastNote = "快路：第 \(index + 1) 份重放 \(result.text.count) 字节但没有 order_sn"
+                        continue
+                    }
+                    let payload = PddFast.payloadJSON(url: saved.url, body: result.text)
+                    var fastOrders = attachLogistics(PinduoduoParser.parse(text: "", payloadJSON: payload), payloadJSON: payload)
+                    if fastOrders.isEmpty {
+                        let head = result.text.prefix(50).replacingOccurrences(of: "\n", with: " ")
+                        fastNote = "快路：第 \(index + 1) 份重放 \(result.text.count) 字节 · 解析 0 条 · 开头「\(head)」"
+                        continue
+                    }
+                    let hasActive = fastOrders.contains { $0.status == .paid || $0.status == .shipped }
+                    if !hasActive {
+                        fastNote = "快路：第 \(index + 1) 份返回 \(fastOrders.count) 条但都不是待发货/待收货"
+                        continue
+                    }
                     fastOrders = await enrichShipping(fastOrders, cookie: cookie)
                     _ = self.write(payload, to: self.payloadFile(for: .pdd))
                     let pickupCount = fastOrders.filter { !$0.pickupCode.isEmpty }.count
-                    let note = String(format: "直连重放 %d 条订单，取件码 %d 单 · 用时 %.1f 秒",
-                                      fastOrders.count, pickupCount, Date().timeIntervalSince(started))
+                    let note = String(format: "直连重放 %d 条订单，取件码 %d 单，用了第 %d/%d 份存档 · 用时 %.1f 秒",
+                                      fastOrders.count, pickupCount, index + 1, saves.count,
+                                      Date().timeIntervalSince(started))
                     return FetchOutcome(
                         orders: fastOrders,
                         httpStatus: 200,
@@ -361,6 +375,7 @@ enum OrderClient {
                 }
             }
         }
+
         let candidates = [
             "https://mobile.pinduoduo.com/order.html",
             "https://mobile.yangkeduo.com/orders.html"

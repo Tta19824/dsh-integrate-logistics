@@ -1,8 +1,9 @@
 import Foundation
 
-/// 拼多多「直连」快路：把第一次从 WebView 里抓到的 order_list 请求存下来，
+/// 拼多多「直连」快路：把从 WebView 里抓到的 order_list 请求存下来，
 /// 之后直接用 URLSession 重放，不再开 WebView。
-/// 实测（0.21.3）：HTTP 200 · 59,835 字节 · order_sn ×56，服务端认这份请求。
+/// 注意：页面会先后发好几条 order_list（默认/待发货/待收货），
+/// 有的返回空列表，所以这里存「一组」请求，重放时逐个试，谁出单就用谁。
 enum PddFast {
     struct Saved: Codable {
         let url: String
@@ -14,41 +15,7 @@ enum PddFast {
 
     static func file() -> URL {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return dir.appendingPathComponent("pdd_request.json")
-    }
-
-    /// 从抓包结果里挑出 order_list 那条请求并存盘
-    @discardableResult
-    static func save(fromPayload payloadJSON: String) -> Bool {
-        guard let data = payloadJSON.data(using: .utf8),
-              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return false }
-        // 页面上会先后发好几次 order_list（默认全部 / 待发货 / 待收货），
-        // 用户关心的是最后那个 tab 的结果，所以留最后一条。
-        var picked: Saved?
-        for entry in entries {
-            guard let raw = entry["r"] as? [String: Any] else { continue }
-            let url = (raw["u"] as? String) ?? ""
-            guard url.contains("order_list") else { continue }
-            var headers: [String: String] = [:]
-            if let h = raw["h"] as? [String: Any] {
-                for (k, v) in h { headers[k] = String(describing: v) }
-            }
-            picked = Saved(
-                url: url,
-                method: (raw["m"] as? String) ?? "POST",
-                body: (raw["d"] as? String) ?? "",
-                headers: headers,
-                savedAt: Date().timeIntervalSince1970
-            )
-        }
-        guard let saved = picked, let encoded = try? JSONEncoder().encode(saved) else { return false }
-        try? encoded.write(to: file(), options: .atomic)
-        return true
-    }
-
-    static func load() -> Saved? {
-        guard let data = try? Data(contentsOf: file()) else { return nil }
-        return try? JSONDecoder().decode(Saved.self, from: data)
+        return dir.appendingPathComponent("pdd_requests.json")
     }
 
     static func responseFile() -> URL {
@@ -56,19 +23,66 @@ enum PddFast {
         return dir.appendingPathComponent("pdd_fast_response.json")
     }
 
+    /// 从抓包结果里挑出所有 order_list 请求，去重后存盘（最多 6 份）
+    @discardableResult
+    static func save(fromPayload payloadJSON: String) -> Int {
+        guard let data = payloadJSON.data(using: .utf8),
+              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return 0 }
+
+        var picked: [Saved] = loadAll()
+        var seen = Set(picked.map { $0.body })
+        var added = 0
+
+        for entry in entries {
+            guard let raw = entry["r"] as? [String: Any] else { continue }
+            let url = (raw["u"] as? String) ?? ""
+            guard url.contains("order_list") else { continue }
+            let body = (raw["d"] as? String) ?? ""
+            guard !seen.contains(body) else { continue }
+            var headers: [String: String] = [:]
+            if let h = raw["h"] as? [String: Any] {
+                for (k, v) in h { headers[k] = String(describing: v) }
+            }
+            seen.insert(body)
+            picked.append(Saved(
+                url: url,
+                method: (raw["m"] as? String) ?? "POST",
+                body: body,
+                headers: headers,
+                savedAt: Date().timeIntervalSince1970
+            ))
+            added += 1
+        }
+
+        if picked.count > 6 { picked = Array(picked.suffix(6)) }
+        if let encoded = try? JSONEncoder().encode(picked) {
+            try? encoded.write(to: file(), options: .atomic)
+        }
+        return added
+    }
+
+    static func loadAll() -> [Saved] {
+        guard let data = try? Data(contentsOf: file()) else { return [] }
+        guard let list = try? JSONDecoder().decode([Saved].self, from: data) else { return [] }
+        return list
+    }
+
     /// 给调试区看的一句话
     static func statusText() -> String {
-        guard let saved = load() else { return "无存档" }
-        let minutes = Int((Date().timeIntervalSince1970 - saved.savedAt) / 60)
-        let host = URL(string: saved.url)?.host ?? "?"
-        return "有存档 · \(host) · 体 \(saved.body.count) 字节 · \(minutes) 分钟前"
+        let list = loadAll()
+        guard !list.isEmpty else { return "无存档" }
+        let newest = list.map { $0.savedAt }.max() ?? 0
+        let minutes = Int((Date().timeIntervalSince1970 - newest) / 60)
+        let sizes = list.map { String($0.body.count) }.joined(separator: "/")
+        return "有存档 \(list.count) 份 · 体 \(sizes) 字节 · \(minutes) 分钟前"
     }
 
     static func clear() {
         try? FileManager.default.removeItem(at: file())
+        try? FileManager.default.removeItem(at: responseFile())
     }
 
-    /// 重放，返回响应正文（失败返回 nil）
+    /// 重放，返回状态码与响应正文
     static func replay(_ saved: Saved, cookie: String) async -> (status: Int, text: String)? {
         guard let url = URL(string: saved.url) else { return nil }
         var r = URLRequest(url: url)
