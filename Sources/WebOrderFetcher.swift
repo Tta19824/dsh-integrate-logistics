@@ -374,45 +374,68 @@ final class WebOrderFetcher: NSObject {
     func inPageReplay(slot: String, urlContains: String) async -> String {
         guard let wv = slots[slot] else { return "NOPAGE" }
         guard wv.url != nil else { return "NOURL" }
-        // 页面里发起请求，把结果先写进 window.__dshReplay，避免 callAsyncJavaScript 的返回值类型问题
-        let kick = """
-        window.__dshReplay = '';
+        // 先问页面：有哪些候选请求（按「当初这条响应有多大」排序，大的一定是真的订单列表）
+        let listJS = """
         (function () {
             var key = KEY;
             var caps = window.__dshCap || [];
-            for (var i = caps.length - 1; i >= 0; i--) {
+            var out = [];
+            for (var i = 0; i < caps.length; i++) {
                 var e = caps[i] || {};
                 var u = String(e.u || '');
-                var r = e.r || null;
                 if (u.indexOf(key) < 0) continue;
-                if (!r) continue;
+                if (!e.r) continue;
+                out.push({ i: i, n: String(e.b || '').length });
+            }
+            out.sort(function (a, b) { return b.n - a.n; });
+            return JSON.stringify(out);
+        })()
+        """
+        let listCode = listJS.replacingOccurrences(of: "KEY", with: "\u{0022}" + urlContains + "\u{0022}")
+        guard let listRaw = try? await wv.evaluateJavaScript(listCode),
+              let listStr = listRaw as? String,
+              let listData = listStr.data(using: .utf8),
+              let listArr = try? JSONSerialization.jsonObject(with: listData) as? [[String: Any]] else {
+            return "NOLIST"
+        }
+        if listArr.isEmpty { return "NONE" }
+
+        // 从最大的那条开始重放，拿到小于 4000 字节的就换下一条
+        for item in listArr.prefix(4) {
+            guard let idx = item["i"] as? Int else { continue }
+            let kick = """
+            window.__dshReplay = '';
+            (function () {
+                var caps = window.__dshCap || [];
+                var e = caps[IDX] || {};
+                var r = e.r || null;
+                if (!r) { window.__dshReplay = 'NONE'; return; }
                 var opt = { credentials: 'include', method: r.m || 'POST' };
                 if (r.h) opt.headers = r.h;
                 if (r.d) opt.body = r.d;
-                fetch(u, opt).then(function (resp) {
+                fetch(String(e.u || ''), opt).then(function (resp) {
                     return resp.text().then(function (t) {
                         window.__dshReplay = String(resp.status) + '|' + t;
                     });
                 }).catch(function (err) {
                     window.__dshReplay = 'ERR ' + err.message;
                 });
-                window.__dshStarted = 1;
-                return;
+            })();
+            """
+            let code = kick.replacingOccurrences(of: "IDX", with: String(idx))
+            _ = try? await wv.evaluateJavaScript(code)
+            var got = ""
+            for _ in 0..<30 {
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                let v = try? await wv.evaluateJavaScript("window.__dshReplay || ''")
+                if let s = v as? String, !s.isEmpty { got = s; break }
             }
-            window.__dshReplay = 'NONE';
-        })();
-        """
-        let js = kick.replacingOccurrences(of: "KEY", with: "\u{0022}" + urlContains + "\u{0022}")
-        _ = try? await wv.evaluateJavaScript(js)
-        for _ in 0..<40 {
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            let v = try? await wv.evaluateJavaScript("window.__dshReplay || ''")
-            if let s = v as? String, !s.isEmpty {
-                return s
-            }
-            if wv.url == nil { return "NOURL" }
+            if got.isEmpty { continue }
+            if got.hasPrefix("ERR") { return got }
+            if got.count > 4000 { return got }
+            // 太小，说明这条是探针请求，换下一条
         }
-        return "TIMEOUT"
+        return "SMALL"
     }
 
     /// 保证 list-jd 这个槽里已经打开了京东页面（没有就打开并等加载完）

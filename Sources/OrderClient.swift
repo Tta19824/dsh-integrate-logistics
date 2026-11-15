@@ -498,8 +498,7 @@ enum OrderClient {
                     if fastOk(body) {
                         let payload = PddFast.payloadJSON(url: "https://mobile.pinduoduo.com/proxy/api/api/aristotle/order_list_v4", body: body)
                         var orders0 = attachLogistics(PinduoduoParser.parse(text: "", payloadJSON: payload), payloadJSON: payload)
-                        let hasActive0 = orders0.contains { $0.status == .paid || $0.status == .shipped }
-                        if orders0.isEmpty || hasActive0 {
+                        if !orders0.isEmpty, orders0.count >= 1 {
                             orders0 = await enrichShipping(orders0, cookie: cookie)
                             let pickup0 = orders0.filter { !$0.pickupCode.isEmpty }.count
                             let note0 = String(format: "页内重放 %d 条订单，取件码 %d 单 · 用时 %.1f 秒",
