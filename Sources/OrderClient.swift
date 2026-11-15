@@ -6,6 +6,7 @@ struct FetchOutcome {
     var byteCount: Int
     var rawFileURL: URL?
     var note: String
+    var payloadJSON: String = ""
 }
 
 enum FetchError: LocalizedError {
@@ -244,6 +245,17 @@ enum OrderClient {
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
         guard !cookie.isEmpty else { throw FetchError.noCookie }
         let started = Date()
+        var fastNote = ""
+        // 快路：重放上次存下的已签名请求（拼多多同款思路）
+        if let wrapped = await JdFast.replay(cookie: cookie) {
+            let fastOrders = TaobaoJdParser.parse(platform: .jd, text: "", payloadJSON: wrapped)
+            if !fastOrders.isEmpty {
+                let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+                return FetchOutcome(orders: fastOrders, httpStatus: 200, byteCount: wrapped.count, rawFileURL: nil,
+                                    note: "京东直连 \(fastOrders.count) 条订单 · 用时 \(cost) 秒")
+            }
+            fastNote = "；快路：重放没解析出订单"
+        }
         let out = try await fetchWebOrders(
             platform: .jd,
             cookie: cookie,
@@ -253,9 +265,11 @@ enum OrderClient {
             clickReadyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
         )
         let cost = String(format: "%.1f", Date().timeIntervalSince(started))
-        var extra = ""
+        var extra = fastNote
         if out.orders.isEmpty {
-            extra = await jdPCListDiagnostic(cookie: cookie)
+            extra = fastNote + await jdPCListDiagnostic(cookie: cookie)
+        } else {
+            JdFast.save(fromPayload: out.payloadJSON)
         }
         return FetchOutcome(
             orders: out.orders,
@@ -422,7 +436,8 @@ enum OrderClient {
             httpStatus: 200,
             byteCount: info.textChars + info.payloadChars,
             rawFileURL: payloadFile(for: platform),
-            note: note
+            note: note,
+            payloadJSON: capture.payloadJSON
         )
     }
 
