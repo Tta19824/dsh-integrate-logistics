@@ -89,6 +89,11 @@ enum OrderClient {
         rawDirectory().appendingPathComponent("tb_requests.json")
     }
 
+    /// 用 URLSession 直接抓回来的物流页 HTML（对比 WebView 里的那一份）
+    static func tbRawHTMLFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("tb_raw_(platform.rawValue).html")
+    }
+
     /// 页面这次加载过的所有资源地址（找出真正的数据接口）
     static func resourcesFile(for platform: Platform) -> URL {
         rawDirectory().appendingPathComponent("resources_\(platform.rawValue).json")
@@ -618,6 +623,7 @@ enum OrderClient {
             DebugFile(id: "resources-\(platform.rawValue)", label: "\(platform.name) · 资源地址", url: resourcesFile(for: platform)),
             DebugFile(id: "tblogihtml-\(platform.rawValue)", label: "\(platform.name) · 物流页源码", url: tbLogisticsHTMLFile(for: platform)),
             DebugFile(id: "tbrequests", label: "淘宝 · 物流请求", url: tbRequestsFile(for: platform)),
+            DebugFile(id: "tbrawhtml", label: "淘宝 · 直连HTML", url: tbRawHTMLFile(for: platform)),
             DebugFile(id: "resourcesdetail-\(platform.rawValue)", label: "\(platform.name) · 详情页资源", url: resourcesDetailFile(for: platform)),
             DebugFile(id: "jd-request", label: "京东 · 直连请求", url: JdDirect.requestFile()),
             DebugFile(id: "pdd-fast", label: "拼多多 · 直连响应", url: PddFast.responseFile()),

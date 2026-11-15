@@ -530,6 +530,23 @@ struct LogisticsSheet: View {
         var best = TaobaoJdParser.TbLogistics()
         var pickupCandidate = ""
 
+        // 快路：先用 URLSession 带着 cookie 直接请求物流页。
+        // 如果服务端把节点直接渲染在 HTML 里，就不用开 WebView（省 4 秒）。
+        if let rawHTML = await TaobaoLogistics.rawHTML(orderNo: order.orderNo, cookieHeader: cookie) {
+            try? rawHTML.data(using: .utf8)?.write(to: OrderClient.tbRawHTMLFile(for: .tb), options: .atomic)
+            let fastEvents = TaobaoJdParser.parseTaobaoTraceHTML(rawHTML)
+            if fastEvents.count >= 2 {
+                best.events = fastEvents
+                best.pickup = TaobaoJdParser.tbPickup(in: rawHTML)
+                best.tracking = TaobaoJdParser.trackingNumber(fromLogisticsHTML: rawHTML)
+                let carrier = PinduoduoParser.carrierName(from: rawHTML) ?? ""
+                if !carrier.isEmpty { best.carrier = carrier }
+                capturedText = rawHTML
+                capturedChars = rawHTML.count
+                landedURL = "直连HTML"
+            }
+        }
+
         // 慢路径：直接开物流轨迹页：它的 mtop 响应走 JSONP，钩子能抓到全量轨迹，比解析页面文字靠谱
         if best.events.count < 3,
            let capL = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: order.orderNo, cookieHeader: cookie) {
