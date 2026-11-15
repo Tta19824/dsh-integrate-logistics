@@ -225,19 +225,15 @@ enum OrderClient {
     }
 
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
-        // 手机版「我的京东」在调试页里能看到订单摘要，点「全部订单」才进列表；
-        // PC 版列表页放在后面兜底。cookie 交给 capture 注入到 WebView 的 cookie store。
+        // 实验：完全照「调试 · 京东订单页」那条能出订单的路走——
+        // 同一个 cookie store、默认 UA、不注入、不写 Cookie 头。
+        _ = cookie
         return try await fetchWebOrders(
             platform: .jd,
-            cookie: cookie,
-            urls: [
-                "https://my.m.jd.com/index.html?sceneval=2",
-                "https://order.jd.com/center/list.action"
-            ],
+            cookie: "",
+            urls: ["https://order.jd.com/center/list.action"],
             seconds: 14,
-            readyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'",
-            clickTexts: ["全部订单"],
-            clickReadyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
+            readyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
         )
     }
 
