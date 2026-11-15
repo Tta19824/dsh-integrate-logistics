@@ -224,10 +224,32 @@ enum OrderClient {
         )
     }
 
+    /// 京东：先用 URLSession 直取 PC 列表页 HTML（快），不行再走 WebView 三路 UA 对照（慢但能取证）。
+    private static func fetchJdDirectHTML(cookie: String) async -> (outcome: FetchOutcome?, fail: String) {
+        guard !cookie.isEmpty else { return (nil, "") }
+        let started = Date()
+        let (status, html) = await JdDirect.fetchOrderListHTML(cookie: cookie)
+        guard status == 200, html.count > 2000 else { return nil }
+        let text = HTMLTools.strip(html)
+        let parsed = TaobaoJdParser.parse(platform: .jd, text: text, payloadJSON: "")
+        let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+        if parsed.isEmpty {
+            let head = text.prefix(40).replacingOccurrences(of: "\n", with: " ")
+            return (nil, "京东直连HTML \(html.count)字·订单0｜\(head)")
+        }
+        return (FetchOutcome(orders: parsed, httpStatus: status, byteCount: html.count, rawFileURL: nil,
+                             note: "京东直连HTML \(parsed.count) 条订单 · 用时 \(cost) 秒"), "")
+    }
+
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
+        // 先试直取 HTML（URLSession + 钥匙串 cookie），成功就不用开 WebView。
+        let fastTrial = await fetchJdDirectHTML(cookie: cookie)
+        let debugFail = fastTrial.fail
+        if let fast = fastTrial.outcome {
+            return fast
+        }
         // 三路 UA 对照实验：同一个 URL、同一个 WebView cookie store，只换 User-Agent。
         // 目的：判断京东 PC 列表页判「未登录」到底是因为 cookie 无效，还是因为 UA 不对。
-        _ = cookie
         let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         guard let url = URL(string: "https://order.jd.com/center/list.action") else { throw FetchError.badURL }
@@ -258,7 +280,7 @@ enum OrderClient {
                 lines.append("\(name)→失败")
             }
         }
-        let note = "京东UA对照：" + lines.joined(separator: "；")
+        let note = (debugFail.isEmpty ? "" : debugFail + "；") + "京东UA对照：" + lines.joined(separator: "；")
         if let best {
             return FetchOutcome(
                 orders: orders,

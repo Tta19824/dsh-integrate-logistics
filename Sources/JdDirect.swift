@@ -85,6 +85,24 @@ enum JdDirect {
         }
     }
 
+    /// 直取 PC 订单页 HTML：带钥匙串 cookie，走 URLSession，不经 WebView。
+    /// 实测日志：页面是服务端渲染（登录态在 HTML 里），所以这条路有可能又快又准。
+    static func fetchOrderListHTML(cookie: String) async -> (status: Int, html: String) {
+        guard let url = URL(string: "https://order.jd.com/center/list.action") else { return (0, "") }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 12
+        req.setValue(cookie, forHTTPHeaderField: "Cookie")
+        req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        req.setValue("https://www.jd.com/", forHTTPHeaderField: "Referer")
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            return (status, String(data: data, encoding: .utf8) ?? "")
+        } catch {
+            return (-1, "")
+        }
+    }
+
     static func requestDetail(_ req: Req) -> String {
         var dict: [String: Any] = ["url": req.url, "method": req.method, "headers": req.headers]
         if let body = req.body { dict["body"] = body }
