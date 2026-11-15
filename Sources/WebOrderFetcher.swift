@@ -322,48 +322,7 @@ final class WebOrderFetcher: NSObject {
         let wv = slots["pdd"] ?? makeWebView(slot: "pdd")
         webView = wv
         await prefillCookies(cookieHeader, platform: platform, force: platform == .jd)
-        let headerCookieNames = cookieHeader.split(separator: ";").compactMap { pair -> String? in
-            let name = pair.split(separator: "=", maxSplits: 1).first.map(String.init) ?? ""
-            let t = name.trimmingCharacters(in: .whitespaces)
-            return t.isEmpty ? nil : t
-        }
-        var storeCookieNames: [String] = []
-        if platform == .jd {
-            let all = await withCheckedContinuation { (cont: CheckedContinuation<[HTTPCookie], Never>) in
-                WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cont.resume(returning: $0) }
-            }
-            storeCookieNames = all.filter { ($0.domain.contains("jd.com") || $0.domain.contains("360buy.com")) }
-                .map { $0.name }
-                .sorted()
-        }
-        var request = URLRequest(url: url)
-        request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-            forHTTPHeaderField: "User-Agent"
-        )
-        _ = try? await wv.load(request)
-        warmURL = url
-        warmAt = Date()
-    }
-
-    /// 依次尝试多个地址，遇到登录页就换下一个；拿到数据就停。
-    /// 在已有的京东页里直接调接口（借页面的环境，避免自己重放被 601 拒绝）
-    /// 用完就把这个槽位的 WebView 释放掉，别一直占着内存
-    func releaseSlot(_ name: String) {
-        slots[name] = nil
-    }
-
-    func inPageFetch(_ url: String) async -> String {
-        guard let wv = slots["list-jd"] else { return "没有京东页面（跳过）" }
-        let js = """
-        const r = await fetch(String(u), { credentials: 'include' });
-        const t = await r.text();
-        return r.status + '|' + t.length + '|' + t.slice(0, 180);
-        """
-        do {
-            let v = try await wv.callAsyncJavaScript(js, arguments: ["u": url], in: nil, contentWorld: .page)
-            return (v as? String) ?? "nil"
-        } catch {
+catch {
             return "ERR " + error.localizedDescription
         }
     }
@@ -372,7 +331,19 @@ final class WebOrderFetcher: NSObject {
         clickTexts: [String] = [], minWait: Double = 0, strict: Bool = false, scroll: Bool = false, stopOnEntries: Bool = true, userAgent: String? = nil, expand: Bool = false, followLink: String? = nil, readyJS: String? = nil, slot: String = "main", referer: String? = nil, clickReadyJS: String? = nil) async throws -> Capture {
         let wv = slots[slot] ?? makeWebView(slot: slot)
         webView = wv
-        await prefillCookies(cookieHeader)
+        await prefillCookies(cookieHeader, platform: platform, force: platform == .jd)
+
+        let headerCookieNames = cookieHeader.split(separator: ";").compactMap { pair -> String? in
+            let t = pair.split(separator: "=", maxSplits: 1).first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
+            return t.isEmpty ? nil : t
+        }
+        var storeCookieNames: [String] = []
+        if platform == .jd {
+            let all = await withCheckedContinuation { (cont: CheckedContinuation<[HTTPCookie], Never>) in
+                WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cont.resume(returning: $0) }
+            }
+            storeCookieNames = all.filter { $0.domain.contains("jd.com") || $0.domain.contains("360buy.com") }.map { $0.name }.sorted()
+        }
 
         var tried: [String] = []
         var best: Capture?
