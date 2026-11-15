@@ -835,6 +835,27 @@ enum TaobaoJdParser {
         return ""
     }
 
+    /// 淘宝物流页的取件码写在包裹卡片标题里，形如「待取件 8-4-7022」。
+    static func tbPickup(in raw: String) -> String {
+        guard !raw.isEmpty else { return "" }
+        let patterns = [
+            #"待取件[ \t]*([0-9]{1,2}[-－][0-9]{1,2}[-－][0-9]{3,4})"#,
+            #"取件码[：: \t]{0,3}([0-9]{1,2}[-－][0-9]{1,2}[-－][0-9]{3,4})"#,
+            #"取货码[：: \t]{0,3}([0-9]{1,2}[-－][0-9]{1,2}[-－][0-9]{3,4})"#,
+            #"取件码[：: \t]{0,3}([A-Za-z0-9]{2,12})"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(raw.startIndex..<raw.endIndex, in: raw)
+            if let match = regex.firstMatch(in: raw, range: range),
+               let valueRange = Range(match.range(at: 1), in: raw) {
+                let value = String(raw[valueRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !value.isEmpty { return value }
+            }
+        }
+        return ""
+    }
+
     static func parseTaobaoTraceHTML(_ html: String) -> [ShipEvent] {
         guard !html.isEmpty else { return [] }
         let pattern = "class=\"rax-text-v2 title\">([^<]*)<\\/span>|class=\"rax-text-v2 subtitle\">([^<]*)<\\/span>|flexRow desc\">([\\s\\S]*?)<\\/div>"

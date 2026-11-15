@@ -532,6 +532,7 @@ struct LogisticsSheet: View {
            let capL = try? await WebOrderFetcher.shared.captureTaobaoLogistics(orderNo: order.orderNo, cookieHeader: cookie) {
             var whole = TaobaoJdParser.parseTaobaoLogistics(payloadJSON: capL.payloadJSON, text: capL.text)
             let fromHTML = TaobaoJdParser.parseTaobaoTraceHTML(capL.html)
+            if whole.pickup.isEmpty { whole.pickup = TaobaoJdParser.tbPickup(in: capL.html) }
             if fromHTML.count > whole.events.count {
                 whole.events = fromHTML
                 if whole.carrier.isEmpty { whole.carrier = order.carrier }
