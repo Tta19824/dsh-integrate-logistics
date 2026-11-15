@@ -267,7 +267,8 @@ enum OrderClient {
         let cost = String(format: "%.1f", Date().timeIntervalSince(started))
         var extra = fastNote
         if out.orders.isEmpty {
-            extra = fastNote + await jdPCListDiagnostic(cookie: cookie)
+            let diag = await jdPCListDiagnostic(cookie: cookie)
+            extra = fastNote + diag
         } else {
             JdFast.save(fromPayload: out.payloadJSON)
         }
