@@ -225,17 +225,19 @@ enum OrderClient {
     }
 
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
-        // 京东这个页面自带登录态（调试页里能看到订单），手写 Cookie 头反而会盖掉
-        // WebView 自己那些必需的 cookie，所以这里传空、只靠共享 cookie store。
+        // 手机版「我的京东」在调试页里能看到订单摘要，点「全部订单」才进列表；
+        // PC 版列表页放在后面兜底。cookie 交给 capture 注入到 WebView 的 cookie store。
         return try await fetchWebOrders(
             platform: .jd,
             cookie: cookie,
             urls: [
-                "https://order.jd.com/center/list.action",
-                "https://my.m.jd.com/index.html?sceneval=2"
+                "https://my.m.jd.com/index.html?sceneval=2",
+                "https://order.jd.com/center/list.action"
             ],
             seconds: 14,
-            readyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
+            readyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'",
+            clickTexts: ["全部订单"],
+            clickReadyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
         )
     }
 
@@ -257,12 +259,12 @@ enum OrderClient {
                 plan.append((url, mobileUA))
             }
         } else if platform == .jd {
+            for url in urls where !url.contains("order.jd.com") {
+                plan.append((url, mobileUA))
+            }
             for url in urls where url.contains("order.jd.com") {
                 plan.append((url, mobileUA))
                 plan.append((url, desktopUA))
-            }
-            for url in urls where !url.contains("order.jd.com") {
-                plan.append((url, mobileUA))
             }
         } else {
             plan = urls.map { ($0, mobileUA) }
@@ -383,7 +385,9 @@ enum OrderClient {
         }
         if !info.writeError.isEmpty { note += "；文件写入失败：\(info.writeError)" }
         if platform == .jd {
-            note += "；凭证 [" + capture.headerCookieNames.joined(separator: ",") + "]；WebView [" + capture.storeCookieNames.joined(separator: ",") + "]"
+            let hasThor = capture.headerCookieNames.contains("thor") ? "有" : "无"
+            let storeThor = capture.storeCookieNames.contains("thor") ? "有" : "无"
+            note += "；凭证 \(capture.headerCookieNames.count) 个/thor" + hasThor + "；WebView \(capture.storeCookieNames.count) 个/thor" + storeThor
         }
         note += jdProbeLine
         note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
