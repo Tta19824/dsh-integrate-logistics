@@ -89,9 +89,14 @@ enum OrderClient {
         rawDirectory().appendingPathComponent("tb_requests.json")
     }
 
+    /// 用 URLSession 直接抓回来的订单列表页 HTML
+    static func tbListRawFile(for platform: Platform) -> URL {
+        rawDirectory().appendingPathComponent("tb_list_raw_" + platform.rawValue + ".html")
+    }
+
     /// 用 URLSession 直接抓回来的物流页 HTML（对比 WebView 里的那一份）
     static func tbRawHTMLFile(for platform: Platform) -> URL {
-        rawDirectory().appendingPathComponent("tb_raw_(platform.rawValue).html")
+        rawDirectory().appendingPathComponent("tb_raw_" + platform.rawValue + ".html")
     }
 
     /// 页面这次加载过的所有资源地址（找出真正的数据接口）
@@ -178,9 +183,12 @@ enum OrderClient {
 
     private static func fetchTaobao(cookie: String) async throws -> FetchOutcome {
         let started = Date()
+        var fastFail = ""
         // 快路：PC 订单页是按登录态 SSR 的，带 cookie 直接请求就有订单，不用开 WebView。
-        if !cookie.isEmpty, let html = await TaobaoListHTML.rawHTML(cookieHeader: cookie) {
-            try? html.data(using: .utf8)?.write(to: htmlFile(for: .tb), options: .atomic)
+        if cookie.isEmpty {
+            fastFail = "；直连HTML 跳过（没 cookie）"
+        } else if let html = await TaobaoListHTML.rawHTML(cookieHeader: cookie) {
+            try? html.data(using: .utf8)?.write(to: tbListRawFile(for: .tb), options: .atomic)
             let text = HTMLTools.strip(html)
             let direct = TaobaoJdParser.parsePcText(platform: .tb, text: text)
             if !direct.isEmpty {
@@ -189,12 +197,17 @@ enum OrderClient {
                     orders: direct,
                     httpStatus: 200,
                     byteCount: html.count,
-                    rawFileURL: htmlFile(for: .tb),
+                    rawFileURL: tbListRawFile(for: .tb),
                     note: note
                 )
             }
+            let hits = text.components(separatedBy: "订单号").count - 1
+            let head = text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40).replacingOccurrences(of: "\n", with: " ")
+            fastFail = "；直连HTML \(html.count) 字节 · 订单号 \(hits) 处 · 开头「\(head)」"
+        } else {
+            fastFail = "；直连HTML 请求失败"
         }
-        return try await fetchWebOrders(
+        let slow = try await fetchWebOrders(
             platform: .tb,
             cookie: cookie,
             urls: [
@@ -202,6 +215,13 @@ enum OrderClient {
             ],
             seconds: 20,
             readyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 2 ? '1' : '0'"
+        )
+        return FetchOutcome(
+            orders: slow.orders,
+            httpStatus: slow.httpStatus,
+            byteCount: slow.byteCount,
+            rawFileURL: slow.rawFileURL,
+            note: slow.note + fastFail
         )
     }
 
@@ -641,6 +661,7 @@ enum OrderClient {
             DebugFile(id: "tblogihtml-\(platform.rawValue)", label: "\(platform.name) · 物流页源码", url: tbLogisticsHTMLFile(for: platform)),
             DebugFile(id: "tbrequests", label: "淘宝 · 物流请求", url: tbRequestsFile(for: platform)),
             DebugFile(id: "tbrawhtml", label: "淘宝 · 直连HTML", url: tbRawHTMLFile(for: platform)),
+            DebugFile(id: "tblistraw", label: "淘宝 · 列表直连HTML", url: tbListRawFile(for: platform)),
             DebugFile(id: "resourcesdetail-\(platform.rawValue)", label: "\(platform.name) · 详情页资源", url: resourcesDetailFile(for: platform)),
             DebugFile(id: "jd-request", label: "京东 · 直连请求", url: JdDirect.requestFile()),
             DebugFile(id: "pdd-fast", label: "拼多多 · 直连响应", url: PddFast.responseFile()),
