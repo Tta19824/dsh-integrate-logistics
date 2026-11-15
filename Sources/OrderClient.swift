@@ -245,6 +245,9 @@ enum OrderClient {
                              note: "京东直连HTML \(parsed.count) 条订单 · 用时 \(cost) 秒"), "")
     }
 
+    static func jdListHTMLFile() -> URL { rawDirectory().appendingPathComponent("jd_list.html") }
+    static func jdListTextFile() -> URL { rawDirectory().appendingPathComponent("jd_list.txt") }
+
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
         // 先试直取 HTML（URLSession + 钥匙串 cookie），成功就不用开 WebView。
         let fastTrial = await fetchJdDirectHTML(cookie: cookie)
