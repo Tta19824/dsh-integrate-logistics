@@ -116,3 +116,15 @@ struct Order: Identifiable, Codable, Equatable {
         "\(platform.rawValue):\(orderNo)"
     }
 }
+
+
+extension Platform {
+    /// 手动打开网页时用的地址（用来过验证 / 看真实页面）
+    static func manualWebURL(_ p: Platform) -> String? {
+        switch p {
+        case .pdd: return "https://mobile.pinduoduo.com/order.html"
+        case .tb: return "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm"
+        case .jd: return "https://my.m.jd.com/index.html?sceneval=2"
+        }
+    }
+}

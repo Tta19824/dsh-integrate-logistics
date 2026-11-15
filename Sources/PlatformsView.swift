@@ -6,6 +6,8 @@ struct PlatformsView: View {
 
     @State private var jdProbe: String?
     @State private var jdProbeLabel = ""
+    /// 给用户手动过验证用的网页（京东风控时会要求滑一下）
+    @State private var webPlatform: Platform?
 
     private var capture: CaptureInfo { OrderClient.lastCapture }
 
@@ -24,7 +26,9 @@ struct PlatformsView: View {
             List {
                 Section {
                     ForEach(Platform.allCases) { platform in
-                        PlatformRow(platform: platform)
+                        PlatformRow(platform: platform) { p in
+                            webPlatform = p
+                        }
                     }
                 } header: {
                     Text("平台账号")
@@ -261,6 +265,9 @@ struct PlatformsView: View {
                     JdProbeSheet(startURL: url, label: jdProbeLabel)
                 }
             }
+            .sheet(item: $webPlatform) { p in
+                WebPageSheet(platform: p)
+            }
         }
     }
 
@@ -275,6 +282,7 @@ struct PlatformsView: View {
 
 struct PlatformRow: View {
     let platform: Platform
+    var onOpenWeb: (Platform) -> Void = { _ in }
     @EnvironmentObject private var app: AppState
 
     private var loggedIn: Bool { app.isLoggedIn(platform) }
@@ -314,6 +322,12 @@ struct PlatformRow: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
 
+                Button("开网页") {
+                    onOpenWeb(platform)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
                 Button("刷新订单") {
                     app.refresh(platform)
                 }
@@ -340,5 +354,31 @@ enum AppInfo {
         let short = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
         return "\(short) (\(build))"
+    }
+}
+
+/// 手动打开平台网页：京东风控要求滑动验证时，用户在这里滑完再回来刷新。
+struct WebPageSheet: View {
+    let platform: Platform
+    @Environment(\.dismiss) private var dismiss
+
+    private var url: URL {
+        if let custom = Platform.manualWebURL(platform), let u = URL(string: custom) { return u }
+        if let u = URL(string: platform.loginURL) { return u }
+        return URL(string: "https://www.jd.com/")!
+    }
+
+    var body: some View {
+        NavigationStack {
+            WebView(url: url, desktop: platform == .pdd || platform == .jd)
+                .ignoresSafeArea(edges: .bottom)
+                .navigationTitle(platform.name)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成") { dismiss() }
+                    }
+                }
+        }
     }
 }
