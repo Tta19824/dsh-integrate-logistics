@@ -71,7 +71,7 @@ struct LoginSheet: View {
         NavigationStack {
             WebView(
                 url: platform.loginURL,
-                desktop: platform == .pdd,
+                desktop: platform == .pdd || platform == .jd,
                 clearDomains: platform.cookieDomainHints,
                 autoQR: platform == .pdd,
                 onReady: { handle.view = $0 }

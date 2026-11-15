@@ -229,11 +229,11 @@ enum OrderClient {
             platform: .jd,
             cookie: cookie,
             urls: [
+                "https://order.jd.com/center/list.action",
                 "https://my.m.jd.com/index.html?sceneval=2"
             ],
-            seconds: 12,
-            clickTexts: ["全部订单"],
-            clickReadyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
+            seconds: 14,
+            readyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
         )
     }
 
