@@ -337,8 +337,7 @@ enum OrderClient {
         }
         let htmlErr = write(htmlToWrite, to: htmlFile(for: platform))
         let digestErr = write(capture.digest, to: digestFile(for: platform))
-            // 京东保留 list-jd，页内直取要用它
-        }
+        // 京东保留 list-jd，页内直取要用它
         var jdProbeLine = ""
         if platform == .jd, let req = JdDirect.findRequest(in: capture.payloadJSON) {
             let fresh = req.url.replacingOccurrences(
