@@ -224,6 +224,18 @@ enum OrderClient {
         )
     }
 
+    /// 诊断：直取 PC 列表页 HTML，原样落盘，顺便数一数 HTML 里有什么。
+    private static func jdPCListDiagnostic(cookie: String) async -> String {
+        let (status, html) = await JdDirect.fetchOrderListHTML(cookie: cookie)
+        guard status == 200, !html.isEmpty else { return "；PC直取 HTTP\(status)" }
+        try? html.data(using: .utf8)?.write(to: jdListHTMLFile(), options: .atomic)
+        let text = HTMLTools.strip(html)
+        try? text.data(using: .utf8)?.write(to: jdListTextFile(), options: .atomic)
+        let keys = ["订单号", "orderId", "orderList", "order_list", "请登录", "我的订单", "待收货"]
+        let counts = keys.map { $0 + "×" + String(JdDirect.occurrences(of: $0, in: html)) }.joined(separator: "·")
+        return "；PC直取 \(html.count)字 HTML：\(counts)"
+    }
+
     /// 京东：手机版 my.m.jd.com → 自动点「全部订单」→ 读页面文本。
     /// 这是 0.19.6/0.19.7 验证过能出 10 单的那条路（需要手机版登录的 pt_key）。
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
@@ -238,12 +250,16 @@ enum OrderClient {
             clickReadyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
         )
         let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+        var extra = ""
+        if out.orders.isEmpty {
+            extra = await jdPCListDiagnostic(cookie: cookie)
+        }
         return FetchOutcome(
             orders: out.orders,
             httpStatus: out.httpStatus,
             byteCount: out.byteCount,
             rawFileURL: out.rawFileURL,
-            note: "京东手机版 " + out.note + " · 用时 " + cost + " 秒"
+            note: "京东手机版 " + out.note + " · 用时 " + cost + " 秒" + extra
         )
     }
 
@@ -706,6 +722,8 @@ enum OrderClient {
             list.append(DebugFile(id: "jddetail-\(platform.rawValue)", label: "订单详情页", url: jdDetailFile(for: platform)))
             list.append(DebugFile(id: "jdreq-\(platform.rawValue)", label: "直连请求", url: JdDirect.requestFile()))
             list.append(DebugFile(id: "jdinpage", label: "页内直取", url: jdInPageFile()))
+            list.append(DebugFile(id: "jdlisthtml", label: "列表HTML", url: jdListHTMLFile()))
+            list.append(DebugFile(id: "jdlisttext", label: "列表文本", url: jdListTextFile()))
         }
         return list.filter { FileManager.default.fileExists(atPath: $0.url.path) }
     }
