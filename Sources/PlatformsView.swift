@@ -370,7 +370,7 @@ struct WebPageSheet: View {
 
     var body: some View {
         NavigationStack {
-            WebView(url: url, desktop: platform == .pdd || platform == .jd)
+            WebView(url: url.absoluteString, desktop: platform == .pdd || platform == .jd)
                 .ignoresSafeArea(edges: .bottom)
                 .navigationTitle(platform.name)
                 .navigationBarTitleDisplayMode(.inline)
