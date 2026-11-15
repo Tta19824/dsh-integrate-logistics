@@ -6,5 +6,8 @@ struct OrderPocketApp: App {
         WindowGroup {
             ContentView()
         }
+        .backgroundTask(.appRefresh(BackgroundRefresh.taskID)) {
+            await BackgroundRefresh.runOnce()
+        }
     }
 }

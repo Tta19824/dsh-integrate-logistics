@@ -23,6 +23,8 @@ struct ContentView: View {
         .environmentObject(app)
         .task {
             OrderClient.warmUp()
+            await BackgroundRefresh.requestAuthorizationIfNeeded()
+            BackgroundRefresh.schedule()
             // 首屏直接用库里的数据，后台默默补一次新的
             app.autoRefreshIfStale()
         }

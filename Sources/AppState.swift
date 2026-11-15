@@ -175,6 +175,9 @@ final class AppState: ObservableObject {
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "last_refresh_at")
             if !quiet { show(lines.joined(separator: "；")) }
             enrichTaobaoTrace()
+            BackgroundRefresh.schedule()
+            let changes = BackgroundRefresh.diff(orders: orders)
+            if !quiet { BackgroundRefresh.post(changes) }
         }
     }
 }
