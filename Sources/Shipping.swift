@@ -118,6 +118,20 @@ enum ShippingClient {
 /// 淘宝「已买到的宝贝」PC 页：跟物流页一样是按登录态服务端渲染，
 /// 带 cookie 直连就能拿到带订单的 HTML，不用开 WebView。
 enum TaobaoListHTML {
+    /// 上一次直连拿到的元信息（HTTP 码、内容类型、最终地址、字节数），用来诊断
+    static var lastMeta = ""
+
+    /// 淘宝 PC 页在部分情况下不是 UTF-8（登录页/风控页常见 GBK），先按 UTF-8 解，乱码多了就换 GB18030
+    static func decodeHTML(_ data: Data) -> String {
+        if let utf8 = String(data: data, encoding: .utf8) {
+            let bad = utf8.filter { $0 == "\u{FFFD}" }.count
+            if bad <= 3 { return utf8 }
+        }
+        let gb = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))
+        if let gbk = String(data: data, encoding: String.Encoding(rawValue: gb)) { return gbk }
+        return String(decoding: data, as: UTF8.self)
+    }
+
     static func rawHTML(cookieHeader: String) async -> String? {
         let raw = "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm"
         guard let url = URL(string: raw) else { return nil }
@@ -130,7 +144,10 @@ enum TaobaoListHTML {
         request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-        let html = String(decoding: data, as: UTF8.self)
+        let html = decodeHTML(data)
+        let ctype = http.value(forHTTPHeaderField: "Content-Type") ?? "?"
+        let finalHost = http.url?.host ?? "?"
+        lastMeta = "\(http.statusCode) · \(ctype) · \(finalHost) · \(data.count) 字节"
         return html.count > 5000 ? html : nil
     }
 }

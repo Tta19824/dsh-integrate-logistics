@@ -203,7 +203,7 @@ enum OrderClient {
             }
             let hits = text.components(separatedBy: "订单号").count - 1
             let head = text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40).replacingOccurrences(of: "\n", with: " ")
-            fastFail = "；直连HTML \(html.count) 字节 · 订单号 \(hits) 处 · 开头「\(head)」"
+            fastFail = "；直连HTML \(TaobaoListHTML.lastMeta) · 订单号 \(hits) 处 · 开头「\(head)」"
         } else {
             fastFail = "；直连HTML 请求失败"
         }
