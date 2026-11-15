@@ -228,7 +228,7 @@ enum OrderClient {
         // 京东这个页面自带登录态（调试页里能看到订单），手写 Cookie 头反而会盖掉
         // WebView 自己那些必需的 cookie，所以这里传空、只靠共享 cookie store。
         _ = cookie
-        try await fetchWebOrders(
+        return try await fetchWebOrders(
             platform: .jd,
             cookie: "",
             urls: [
