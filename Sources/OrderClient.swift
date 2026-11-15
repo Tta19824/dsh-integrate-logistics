@@ -225,9 +225,12 @@ enum OrderClient {
     }
 
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
+        // 京东这个页面自带登录态（调试页里能看到订单），手写 Cookie 头反而会盖掉
+        // WebView 自己那些必需的 cookie，所以这里传空、只靠共享 cookie store。
+        _ = cookie
         try await fetchWebOrders(
             platform: .jd,
-            cookie: cookie,
+            cookie: "",
             urls: [
                 "https://order.jd.com/center/list.action",
                 "https://my.m.jd.com/index.html?sceneval=2"
@@ -256,8 +259,8 @@ enum OrderClient {
             }
         } else if platform == .jd {
             for url in urls where url.contains("order.jd.com") {
-                plan.append((url, desktopUA))
                 plan.append((url, mobileUA))
+                plan.append((url, desktopUA))
             }
             for url in urls where !url.contains("order.jd.com") {
                 plan.append((url, mobileUA))

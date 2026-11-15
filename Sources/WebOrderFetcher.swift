@@ -338,7 +338,7 @@ final class WebOrderFetcher: NSObject {
     }
 
     func inPageFetch(_ url: String) async -> String {
-        guard let wv = slots["list-jd"] ?? slots["main"] ?? slots.values.first else { return "没有可用的 WebView" }
+        guard let wv = slots["list-jd"] else { return "没有京东页面（跳过）" }
         let js = """
         const r = await fetch(String(u), { credentials: 'include' });
         const t = await r.text();
