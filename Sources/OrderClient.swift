@@ -486,31 +486,37 @@ enum OrderClient {
         // 快路：之前抓到过 order_list 请求，直接重放，不开 WebView。
         // 页面会发好几条（默认/待发货/待收货），有的返回空列表，所以逐份试。
         var fastNote = "快路："
-        // 快路零：页面还开着的话，直接在页面里把那条 order_list 再发一次（不用重新渲染）
+        // 快路零：页面还开着的话，直接在页面里把候选请求重放一遍，挑出「有进行中订单」的那份
         if !cookie.isEmpty {
-            let replay = await WebOrderFetcher.shared.inPageReplay(slot: "pdd", urlContains: "order_list")
-            if replay.hasPrefix("ERR") || replay == "NONE" || replay == "NOPAGE" || replay == "NOURL" || replay == "NOTSTRING" {
-                fastNote += "页内重放不可用（\(replay)）｜"
+            let replay = await WebOrderFetcher.shared.inPageReplayBodies(slot: "pdd", urlContains: "order_list")
+            if replay.bodies.isEmpty {
+                fastNote += "页内重放不可用（\(replay.note)）｜"
             } else {
-                let parts = replay.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
-                if parts.count == 2, parts[0] == "200" {
-                    let body = String(parts[1])
-                    if fastOk(body) {
-                        let payload = PddFast.payloadJSON(url: "https://mobile.pinduoduo.com/proxy/api/api/aristotle/order_list_v4", body: body)
-                        var orders0 = attachLogistics(PinduoduoParser.parse(text: "", payloadJSON: payload), payloadJSON: payload)
-                        if !orders0.isEmpty, orders0.count >= 1 {
-                            orders0 = await enrichShipping(orders0, cookie: cookie)
-                            let pickup0 = orders0.filter { !$0.pickupCode.isEmpty }.count
-                            let note0 = String(format: "页内重放 %d 条订单，取件码 %d 单 · 用时 %.1f 秒",
-                                               orders0.count, pickup0, Date().timeIntervalSince(started))
-                            return FetchOutcome(orders: orders0, httpStatus: 200, byteCount: body.count,
-                                                rawFileURL: self.payloadFile(for: .pdd), note: note0,
-                                                payloadJSON: payload, authoritative: true)
-                        }
+                var chosen: (orders: [Order], payload: String, size: Int)?
+                for body in replay.bodies {
+                    let payload = PddFast.payloadJSON(url: "https://mobile.pinduoduo.com/proxy/api/api/aristotle/order_list_v4", body: body)
+                    var parsed = attachLogistics(PinduoduoParser.parse(text: "", payloadJSON: payload), payloadJSON: payload)
+                    let hasActive = parsed.contains { $0.status == .paid || $0.status == .shipped }
+                    if hasActive {
+                        chosen = (parsed, payload, body.count)
+                        break
                     }
-                    fastNote += "页内重放 \(body.count) 字节但没出进行中的订单｜"
-                } else {
-                    fastNote += "页内重放状态码异常｜"
+                    if chosen == nil, !parsed.isEmpty {
+                        chosen = (parsed, payload, body.count)
+                    }
+                }
+                if let picked = chosen {
+                    let hasActive = picked.orders.contains { $0.status == .paid || $0.status == .shipped }
+                    if hasActive {
+                        let enriched = await enrichShipping(picked.orders, cookie: cookie)
+                        let pickupN = enriched.filter { !$0.pickupCode.isEmpty }.count
+                        let note0 = String(format: "页内重放 %d 条订单，取件码 %d 单 · 用时 %.1f 秒",
+                                           enriched.count, pickupN, Date().timeIntervalSince(started))
+                        return FetchOutcome(orders: enriched, httpStatus: 200, byteCount: picked.size,
+                                            rawFileURL: self.payloadFile(for: .pdd), note: note0,
+                                            payloadJSON: picked.payload, authoritative: true)
+                    }
+                    fastNote += "页内重放 \(picked.orders.count) 条但没有进行中的订单｜"
                 }
             }
         }

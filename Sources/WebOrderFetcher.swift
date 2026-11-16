@@ -371,10 +371,11 @@ final class WebOrderFetcher: NSObject {
     /// 在已经打开的页面里，把之前抓到的某条请求原样再发一次。
     /// 好处：cookie、UA、签名参数都由页面自己带，不用我们把凭证搬来搬去。
     /// 返回 "status|body"，没有可用页面或没有匹配请求时返回 nil。
-    func inPageReplay(slot: String, urlContains: String) async -> String {
-        guard let wv = slots[slot] else { return "NOPAGE" }
-        guard wv.url != nil else { return "NOURL" }
-        // 先问页面：有哪些候选请求（按「当初这条响应有多大」排序，大的一定是真的订单列表）
+    /// 在已打开的页面里重放候选请求，返回多份响应体（按当初响应大小从大到小，最多 3 份）。
+    /// 用 "\n#####\n" 拼接，调用方自行拆分。
+    func inPageReplayBodies(slot: String, urlContains: String) async -> (bodies: [String], note: String) {
+        guard let wv = slots[slot] else { return ([], "NOPAGE") }
+        guard wv.url != nil else { return ([], "NOURL") }
         let listJS = """
         (function () {
             var key = KEY;
@@ -396,12 +397,13 @@ final class WebOrderFetcher: NSObject {
               let listStr = listRaw as? String,
               let listData = listStr.data(using: .utf8),
               let listArr = try? JSONSerialization.jsonObject(with: listData) as? [[String: Any]] else {
-            return "NOLIST"
+            return ([], "NOLIST")
         }
-        if listArr.isEmpty { return "NONE" }
+        if listArr.isEmpty { return ([], "NONE") }
 
-        // 从最大的那条开始重放，拿到小于 4000 字节的就换下一条
-        for item in listArr.prefix(4) {
+        var bodies: [String] = []
+        var lastNote = "SMALL"
+        for item in listArr.prefix(3) {
             guard let idx = item["i"] as? Int else { continue }
             let kick = """
             window.__dshReplay = '';
@@ -425,17 +427,20 @@ final class WebOrderFetcher: NSObject {
             let code = kick.replacingOccurrences(of: "IDX", with: String(idx))
             _ = try? await wv.evaluateJavaScript(code)
             var got = ""
-            for _ in 0..<30 {
+            for _ in 0..<24 {
                 try? await Task.sleep(nanoseconds: 120_000_000)
                 let v = try? await wv.evaluateJavaScript("window.__dshReplay || ''")
                 if let s = v as? String, !s.isEmpty { got = s; break }
             }
-            if got.isEmpty { continue }
-            if got.hasPrefix("ERR") { return got }
-            if got.count > 4000 { return got }
-            // 太小，说明这条是探针请求，换下一条
+            if got.isEmpty { lastNote = "TIMEOUT"; continue }
+            if got.hasPrefix("ERR") { return ([], got) }
+            let parts = got.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2, parts[0] == "200" else { lastNote = "STATUS"; continue }
+            let body = String(parts[1])
+            if body.count < 4000 { lastNote = "SMALL"; continue }
+            bodies.append(body)
         }
-        return "SMALL"
+        return (bodies, bodies.isEmpty ? lastNote : "OK")
     }
 
     /// 保证 list-jd 这个槽里已经打开了京东页面（没有就打开并等加载完）
