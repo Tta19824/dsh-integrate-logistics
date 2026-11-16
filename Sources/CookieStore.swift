@@ -88,6 +88,28 @@ enum CookieStore {
         return platform.essentialCookies.contains { header.contains("\($0)=") }
     }
 
+    /// 把 WebView 里该平台的 cookie 全删掉（重新登录前用，钥匙串由调用方决定删不删）。
+    /// 不这么做的话：京东会话一旦被服务端作废，WebView 里那份死 cookie 会一直盖着新登录。
+    static func clearWebViewCookies(for platform: Platform, completion: @escaping (Int) -> Void) {
+        let store = WKWebsiteDataStore.default().httpCookieStore
+        let hints = platform.cookieDomainHints
+        store.getAllCookies { cookies in
+            let doomed = cookies.filter { cookie in hints.contains { cookie.domain.contains($0) } }
+            let total = doomed.count
+            if total == 0 {
+                completion(0)
+                return
+            }
+            var left = total
+            for cookie in doomed {
+                store.delete(cookie) {
+                    left -= 1
+                    if left == 0 { completion(total) }
+                }
+            }
+        }
+    }
+
     /// 同步版的提取（async 包装），抓完单后拿来回写，做 token 续期。
     static func currentHeader(for platform: Platform) async -> String? {
         await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in

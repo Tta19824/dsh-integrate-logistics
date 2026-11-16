@@ -66,7 +66,13 @@ final class AppState: ObservableObject {
                 if let header, !header.isEmpty {
                     CookieStore.save(header, for: platform)
                     let count = header.split(separator: ";").count
-                    self.show("\(platform.name)：已保存 \(count) 个 cookie（\(header.count) 字节）")
+                    var extra = ""
+                    if platform == .jd {
+                        let keyLen = header.components(separatedBy: ";")
+                            .first(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("pt_key=") })?.count ?? 0
+                        extra = keyLen > 0 ? "，pt_key \(max(keyLen - 7, 0)) 位" : "，没看到 pt_key"
+                    }
+                    self.show("\(platform.name)：已保存 \(count) 个 cookie（\(header.count) 字节\(extra)）")
                 } else {
                     self.show("\(platform.name)：没读到 cookie，可能还没登录成功")
                 }
@@ -79,6 +85,19 @@ final class AppState: ObservableObject {
     func logout(_ platform: Platform) {
         CookieStore.delete(for: platform)
         objectWillChange.send()
+    }
+
+    /// 清空某平台的登录态：钥匙串 + WebView 里的 cookie + 京东重放存档。
+    /// 京东会话被服务端作废后，只重登不清 WebView 是没用的（旧 cookie 会一直盖着新的）。
+    func clearLogin(_ platform: Platform) {
+        CookieStore.delete(for: platform)
+        if platform == .jd { JdFast.clear() }
+        CookieStore.clearWebViewCookies(for: platform) { count in
+            Task { @MainActor in
+                self.show("\(platform.name)：已清掉 \(count) 个网页 cookie，请重新登录")
+                self.reload()
+            }
+        }
     }
 
     func refresh(_ platform: Platform) {

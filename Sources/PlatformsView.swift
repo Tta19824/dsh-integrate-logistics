@@ -284,6 +284,7 @@ struct PlatformRow: View {
     let platform: Platform
     var onOpenWeb: (Platform) -> Void = { _ in }
     @EnvironmentObject private var app: AppState
+    @State private var confirmClear = false
 
     private var loggedIn: Bool { app.isLoggedIn(platform) }
 
@@ -335,6 +336,13 @@ struct PlatformRow: View {
                 .controlSize(.small)
                 .disabled(app.busy != nil)
 
+                if platform == .jd {
+                    Button("清空重登") { confirmClear = true }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(.red)
+                }
+
                 Spacer()
             }
 
@@ -345,6 +353,12 @@ struct PlatformRow: View {
             }
         }
         .padding(.vertical, 4)
+        .confirmationDialog("清空京东的登录态？", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("清掉，重新登录", role: .destructive) { app.clearLogin(.jd) }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("会删掉钥匙串里的凭证、网页里的 cookie 和直开存档。适用于「已登录但京东说账号信息获取失败」。")
+        }
     }
 }
 

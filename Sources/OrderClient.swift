@@ -586,6 +586,12 @@ enum OrderClient {
             let hasThor = capture.headerCookieNames.contains("thor") ? "有" : "无"
             let storeThor = capture.storeCookieNames.contains("thor") ? "有" : "无"
             note += "；凭证 \(capture.headerCookieNames.count) 个/thor" + hasThor + "；WebView \(capture.storeCookieNames.count) 个/thor" + storeThor
+            // 凭证是什么时候存的：会话失效时一眼能对上时间（京东 web 会话寿命有限）
+            if let at = CookieStore.savedAt(for: .jd) {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "MM-dd HH:mm"
+                note += "·存于" + formatter.string(from: at)
+            }
         }
         note += jdProbeLine
         note += String(format: " · 用时 %.1f 秒", Date().timeIntervalSince(started))
