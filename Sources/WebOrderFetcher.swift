@@ -444,6 +444,7 @@ final class WebOrderFetcher: NSObject {
     }
 
     /// 保证 list-jd 这个槽里已经打开了京东页面（没有就打开并等加载完）
+    /// 不再死等固定秒数：只要页面已经落到 jd.com 且 hook 装好，立刻返回（省掉 6 秒空等）。
     func ensureJdPage(cookieHeader: String, wait: Double = 6) async -> Bool {
         if let wv = slots["list-jd"], let host = wv.url?.host, host.contains("jd.com") { return true }
         let wv = slots["list-jd"] ?? makeWebView(slot: "list-jd")
@@ -454,8 +455,81 @@ final class WebOrderFetcher: NSObject {
         request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
                          forHTTPHeaderField: "User-Agent")
         _ = await wv.load(request)
-        try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-        return true
+        let deadline = Date().addingTimeInterval(wait)
+        while Date() < deadline {
+            let alive = (try? await wv.evaluateJavaScript("(document.readyState && document.readyState !== 'loading') ? '1' : '0'")) as? String
+            if alive == "1", let host = wv.url?.host, host.contains("jd.com") { return true }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+        return wv.url?.host?.contains("jd.com") ?? false
+    }
+
+    /// 在 list-jd 页面里把一条请求原样重发（方法 / 头 / 请求体都由调用方给），
+    /// 返回 "status|body"，异常时返回 "NOPAGE" / "TIMEOUT" / "ERR 原因"。
+    /// 关键是 `credentials: 'include'` + 页面自带 UA/Origin：sign 不用我们算，cookie 不用我们搬。
+    func inPageReplay(url: String, method: String, headers: [String: String], body: String, timeoutMS: Double = 6000) async -> String {
+        guard let wv = slots["list-jd"] else { return "NOPAGE" }
+        guard wv.url?.host?.isEmpty == false else { return "NOPAGE" }
+        let js = """
+        var u = args.url;
+        var m = args.method || 'POST';
+        var h = args.headers || {};
+        var b = args.body || '';
+        var ms = args.ms || 6000;
+        var opt = { credentials: 'include', method: m };
+        if (h && Object.keys(h).length > 0) opt.headers = h;
+        if (b && String(b).length > 0) opt.body = b;
+        var timer = new Promise(function (res) { setTimeout(function () { res('TIMEOUT'); }, ms); });
+        var net = fetch(u, opt).then(function (r) {
+            return r.text().then(function (t) { return String(r.status) + '|' + t; });
+        }).catch(function (e) {
+            return 'ERR ' + ((e && e.message) ? String(e.message) : 'fetch failed');
+        });
+        return Promise.race([net, timer]);
+        """
+        do {
+            let v = try await wv.callAsyncJavaScript(
+                js,
+                arguments: ["url": url, "method": method, "headers": headers, "body": body, "ms": timeoutMS],
+                in: nil,
+                in: .page
+            )
+            if let s = v as? String { return s }
+            return "ERR 返回类型 \(type(of: v))"
+        } catch {
+            let msg = error.localizedDescription
+            return "ERR " + (msg.isEmpty ? String(describing: error) : msg)
+        }
+    }
+
+    /// 把 list-jd 页面里抓到的、和京东订单接口相关的那几条请求列出来（诊断用）
+    func jdCapturedRequests() async -> String {
+        guard let wv = slots["list-jd"] else { return "NOPAGE" }
+        let js = """
+        (function () {
+            var caps = window.__dshCap || [];
+            var out = [];
+            for (var i = 0; i < caps.length; i++) {
+                var e = caps[i] || {};
+                var u = String(e.u || '');
+                var r = e.r || null;
+                var ru = r ? String(r.u || '') : '';
+                var combined = u + ' ' + ru;
+                if (combined.indexOf('order_list') < 0 && String(e.b || '').indexOf('orderList') < 0) continue;
+                out.push({
+                    i: i,
+                    m: r ? String(r.m || '') : 'NOR',
+                    u: ru.length > 160 ? ru.slice(0, 160) : ru,
+                    q: ru.length,
+                    d: r ? String(r.d || '').length : 0,
+                    b: String(e.b || '').length
+                });
+            }
+            return JSON.stringify(out);
+        })()
+        """
+        let raw = (try? await wv.evaluateJavaScript(js)) as? String ?? "ERR"
+        return raw
     }
 
     func capture(platform: Platform = .pdd, urls: [URL], cookieHeader: String, seconds: Double = 22, clickTabs: Bool = true,

@@ -1,12 +1,21 @@
 import Foundation
 
-/// 京东：把手机版订单列表页发出的那条已签名请求存下来，下次先直连重放。
-/// 思路照搬拼多多 PddFast：签名在 URL 里，原样重放即可（过期就回退 WebView）。
+/// 京东：把手机版订单列表页发出的那条已签名请求（URL + 方法 + 请求头 + 请求体）整条存下来，
+/// 下次在同一个站点的页面里原样重放一次 —— cookie、UA、设备指纹、sign 全都由页面自己带，
+/// 我们只负责“把原来那条请求再发一遍”。
+///
+/// 和拼多多 PddFast 的区别：拼多多的签名在 URL 里，URLSession 直连就行；
+/// 京东的 sign 在混淆 JS 里（JdDirect 试过 URLSession 重放，稳定报 601），必须借页面之手发。
 enum JdFast {
     struct Saved: Codable {
         var url: String
         var headers: [String: String]
         var savedAt: TimeInterval
+        /// 下面三个是 0.36.1 加的，老存档没有也能解码
+        var method: String?
+        var body: String?
+        /// 这条存档上一次重放拿到了多少条订单（0 表示还没验证过）
+        var hit: Int?
     }
 
     static func file() -> URL {
@@ -29,70 +38,121 @@ enum JdFast {
         try? FileManager.default.removeItem(at: file())
     }
 
+    static func last() -> Saved? { loadAll().last }
+
+    /// 最近一条存档的 URL（兼容老调用）
+    static func lastURL() -> String? { loadAll().last?.url }
+
+    // MARK: - 存档
+
+    private static func entries(_ payloadJSON: String) -> [[String: Any]]? {
+        guard let data = payloadJSON.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
+        return arr
+    }
+
+    /// 是不是“那条订单列表请求”：URL 或响应体里带 order_list / orderList
+    private static func isOrderList(url: String, body: String) -> Bool {
+        if url.contains("order_list") || url.contains("orderList") { return true }
+        if body.contains("orderList") { return true }
+        return false
+    }
+
     /// 从一次 WebView 抓包结果里挑出订单接口请求并存档（按 URL 去重，最多 4 条）
     static func save(fromPayload payloadJSON: String) {
-        guard let data = payloadJSON.data(using: .utf8),
-              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+        guard let arr = entries(payloadJSON) else { return }
         var list = loadAll()
+        var added = 0
         for item in arr {
-            guard let url = item["u"] as? String, url.contains("order_list") else { continue }
+            let resp = item["b"] as? String ?? ""
+            let entryURL = item["u"] as? String ?? ""
             guard let req = item["r"] as? [String: Any] else { continue }
+            let url = (req["u"] as? String) ?? entryURL
+            guard !url.isEmpty, isOrderList(url: url, body: resp) else { continue }
             var headers: [String: String] = [:]
             if let h = req["h"] as? [String: Any] {
                 for (k, v) in h { if let s = v as? String { headers[k] = s } }
             }
             if list.contains(where: { $0.url == url }) { continue }
-            list.append(Saved(url: url, headers: headers, savedAt: Date().timeIntervalSince1970))
+            list.append(Saved(
+                url: url,
+                headers: headers,
+                savedAt: Date().timeIntervalSince1970,
+                method: (req["m"] as? String) ?? "POST",
+                body: req["d"] as? String ?? "",
+                hit: nil
+            ))
+            added += 1
         }
-        if list.count > 4 { list = Array(list.suffix(4)) }
-        saveAll(list)
+        if added > 0 {
+            if list.count > 4 { list = Array(list.suffix(4)) }
+            saveAll(list)
+        }
     }
 
-    /// 最近一条存档的 URL（页内直取用）
-    static func lastURL() -> String? { loadAll().last?.url }
+    /// 抓包结果里到底有没有可用的订单请求（写进 note，别再静默失败）
+    static func diagnose(payloadJSON: String) -> String {
+        guard let arr = entries(payloadJSON) else { return "·抓包空" }
+        var withReq = 0
+        var matched = 0
+        var withSign = 0
+        var withBody = 0
+        for item in arr {
+            guard let req = item["r"] as? [String: Any] else { continue }
+            withReq += 1
+            let url = (req["u"] as? String) ?? (item["u"] as? String ?? "")
+            let resp = item["b"] as? String ?? ""
+            guard isOrderList(url: url, body: resp) else { continue }
+            matched += 1
+            if url.contains("sign=") { withSign += 1 }
+            if let d = req["d"] as? String, !d.isEmpty { withBody += 1 }
+        }
+        return "·抓\(arr.count)条/带请求\(withReq)/命中\(matched)/含sign\(withSign)/有body\(withBody)"
+    }
+
+    // MARK: - 重放前处理
+
+    /// 把 `t=` 换成当前毫秒时间戳（京东很多接口只把 t 当防缓存，改了也认）
+    static func refreshT(_ url: String) -> String {
+        let now = String(Int(Date().timeIntervalSince1970 * 1000))
+        // 没有 t 就原样返回：乱加参数反而可能让 sign 对不上
+        return url.replacingOccurrences(
+            of: #"(?<=[?&])t=\d+"#,
+            with: "t=" + now,
+            options: .regularExpression
+        )
+    }
+
+    /// fetch 里不能手动设的头（设了会被浏览器丢掉甚至整条失败），交给页面自己补
+    private static let forbiddenHeaders: Set<String> = [
+        "cookie", "cookie2", "host", "user-agent", "referer", "origin",
+        "content-length", "connection", "accept-encoding", "te", "trailer",
+        "upgrade", "via", "expect"
+    ]
+
+    static func safeHeaders(_ headers: [String: String], body: String) -> [String: String] {
+        var out: [String: String] = [:]
+        for (k, v) in headers {
+            let lower = k.lowercased()
+            if forbiddenHeaders.contains(lower) { continue }
+            if lower.hasPrefix("proxy-") || lower.hasPrefix("sec-") { continue }
+            if v.isEmpty { continue }
+            // 没有请求体却带 Content-Type 反而不合规
+            if body.isEmpty && (lower == "content-type" || lower == "content-length") { continue }
+            out[k] = v
+        }
+        return out
+    }
 
     static func statusText() -> String {
         let list = loadAll()
         guard !list.isEmpty else { return "无存档" }
         let url = list.last?.url ?? ""
         let host = URL(string: url)?.host ?? url
-        let bodyLen = URLComponents(string: url)?.query?.count ?? 0
+        let paramLen = URLComponents(string: url)?.query?.count ?? 0
         let mins = Int(Date().timeIntervalSince1970 - (list.last?.savedAt ?? 0)) / 60
-        return "存档 \(list.count) 份 · \(host) · 参数 \(bodyLen) 字节 · \(mins) 分钟前"
-    }
-
-    /// 逐份重放，返回 (payloadJSON, 诊断)
-    static func replay(cookie: String) async -> (wrapped: String?, note: String) {
-        let list = loadAll()
-        guard !list.isEmpty else { return (nil, "；快路：无存档") }
-        var detail: [String] = []
-        for (idx, saved) in list.enumerated() {
-            guard let url = URL(string: saved.url) else { continue }
-            var req = URLRequest(url: url)
-            req.timeoutInterval = 8
-            req.setValue(cookie, forHTTPHeaderField: "Cookie")
-            var ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-            for (k, v) in saved.headers {
-                let lower = k.lowercased()
-                if v.contains("$") { continue }
-                if lower == "cookie" || lower == "content-length" || lower == "host" { continue }
-                if lower == "user-agent" { ua = v; continue }
-                req.setValue(v, forHTTPHeaderField: k)
-            }
-            req.setValue(ua, forHTTPHeaderField: "User-Agent")
-            req.setValue("https://my.m.jd.com/", forHTTPHeaderField: "Referer")
-            guard let (data, resp) = try? await URLSession.shared.data(for: req) else {
-                detail.append("网络失败")
-                continue
-            }
-            let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
-            let body = String(data: data, encoding: .utf8) ?? ""
-            if code != 200 { detail.append("HTTP" + String(code)); continue }
-            if !body.contains("orderList") { detail.append(String(data.count) + "B无orderList"); continue }
-            let wrapped = "[{" + jsonQuoted("u") + ":" + jsonQuoted(saved.url) + "," + jsonQuoted("b") + ":" + jsonQuoted(body) + "}]"
-            return (wrapped, "；快路：第 " + String(idx + 1) + "/" + String(list.count) + " 份重放成功")
-        }
-        return (nil, "；快路：" + detail.joined(separator: "/"))
+        let bodyLen = (list.last?.body ?? "").count
+        return "存档 \(list.count) 份 · \(host) · 参数 \(paramLen) 字节 · 请求体 \(bodyLen) 字节 · \(mins) 分钟前"
     }
 
     static func jsonQuotedPublic(_ s: String) -> String { jsonQuoted(s) }

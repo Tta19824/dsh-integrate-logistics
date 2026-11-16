@@ -247,46 +247,54 @@ enum OrderClient {
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
         guard !cookie.isEmpty else { throw FetchError.noCookie }
         let started = Date()
-        var fastNote = ""
-        // 快路：重放上次存下的已签名请求（拼多多同款思路）
-        // 快路一：页内直取。用一个隐藏页面打开 my.m.jd.com，然后在页面里发那条已签名请求。
-        // 好处是 cookie、UA、来源、设备指纹都由页面自己带，不用我们伪造。
-        if let savedURL = JdFast.lastURL(), !savedURL.isEmpty {
-            let fresh = savedURL.replacingOccurrences(
-                of: #"(?<=[?&])t=\d+"#,
-                with: "t=\(Int(Date().timeIntervalSince1970 * 1000))",
-                options: .regularExpression
-            )
+        var diag: [String] = []
+        // 快路：有存档就在页面里把那条已签名请求原样重放。
+        // 页内发 = cookie / UA / 指纹 / sign 全由页面自己带，我们只负责「再发一遍」。
+        // 两条尝试：先刷新 t（多数接口只把 t 当防缓存），再原样（sign 若覆盖 t 就只有这条能过）。
+        if let saved = JdFast.last() {
             if await WebOrderFetcher.shared.ensureJdPage(cookieHeader: cookie) {
-                let raw = await WebOrderFetcher.shared.inPageFetchJSON(fresh)
-                if !raw.hasPrefix("ERR") {
-                    let parts = raw.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
-                    if parts.count == 2, parts[0] == "200" {
-                        let body = String(parts[1])
-                        if body.contains("orderList") {
-                            let wrapped = "[{\"u\":\"\(savedURL)\",\"b\":\(JdFast.jsonQuotedPublic(body))}]"
-                            let orders = TaobaoJdParser.parse(platform: .jd, text: "", payloadJSON: wrapped)
-                            if !orders.isEmpty {
-                                let cost = String(format: "%.1f", Date().timeIntervalSince(started))
-                                return FetchOutcome(orders: orders, httpStatus: 200, byteCount: body.count, rawFileURL: nil,
-                                                    note: "京东页内直取 \(orders.count) 条订单 · 用时 \(cost) 秒")
-                            }
-                        }
+                var attempts: [(String, String)] = []
+                let fresh = JdFast.refreshT(saved.url)
+                if fresh != saved.url { attempts.append(("刷新t", fresh)) }
+                attempts.append(("原样", saved.url))
+                for (label, url) in attempts {
+                    let raw = await WebOrderFetcher.shared.inPageReplay(
+                        url: url,
+                        method: saved.method ?? "POST",
+                        headers: JdFast.safeHeaders(saved.headers, body: saved.body ?? ""),
+                        body: saved.body ?? ""
+                    )
+                    diag.append(label + replayBrief(raw))
+                    guard raw.hasPrefix("200|") else { continue }
+                    let body = String(raw.dropFirst(4))
+                    guard body.contains("orderList") else { continue }
+                    let wrapped = "[{\"u\":" + JdFast.jsonQuotedPublic(url) + ",\"b\":" + JdFast.jsonQuotedPublic(body) + "}]"
+                    let orders = TaobaoJdParser.parse(platform: .jd, text: "", payloadJSON: wrapped)
+                    if orders.isEmpty {
+                        diag.append("解析0条")
+                        continue
                     }
+                    let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+                    _ = write(wrapped, to: payloadFile(for: .jd))
+                    return FetchOutcome(
+                        orders: orders,
+                        httpStatus: 200,
+                        byteCount: body.count,
+                        rawFileURL: payloadFile(for: .jd),
+                        note: "京东页内直取 \(orders.count) 条（\(label)）· 用时 \(cost) 秒",
+                        payloadJSON: wrapped,
+                        authoritative: true
+                    )
                 }
+                _ = write("URL: \(saved.url)\nMETHOD: \(saved.method ?? "")\nHEADERS: \(saved.headers)\n\n请求体前 600 字:\n\(String((saved.body ?? "").prefix(600)))\n\n重放结果: \(diag.joined(separator: " / "))",
+                          to: jdInPageFile())
+            } else {
+                diag.append("无页面")
             }
+        } else {
+            diag.append("无存档")
         }
-        let fast = await JdFast.replay(cookie: cookie)
-        fastNote = fast.note
-        if let wrapped = fast.wrapped {
-            let fastOrders = TaobaoJdParser.parse(platform: .jd, text: "", payloadJSON: wrapped)
-            if !fastOrders.isEmpty {
-                let cost = String(format: "%.1f", Date().timeIntervalSince(started))
-                return FetchOutcome(orders: fastOrders, httpStatus: 200, byteCount: wrapped.count, rawFileURL: nil,
-                                    note: "京东直连 \(fastOrders.count) 条订单 · 用时 \(cost) 秒")
-            }
-            fastNote = "；快路：重放成功但解析 0 条"
-        }
+        // 慢路：打开手机版订单列表页，点「全部订单」，等页面渲染出订单号
         let out = try await fetchWebOrders(
             platform: .jd,
             cookie: cookie,
@@ -295,21 +303,60 @@ enum OrderClient {
             clickTexts: ["全部订单"],
             clickReadyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
         )
-        let cost = String(format: "%.1f", Date().timeIntervalSince(started))
-        var extra = fastNote
+        var extra = "；页内重放：" + diag.joined(separator: " / ")
         if out.orders.isEmpty {
-            let diag = await jdPCListDiagnostic(cookie: cookie)
-            extra = fastNote + diag
+            let diag2 = await jdPCListDiagnostic(cookie: cookie)
+            extra += "；" + diag2
         } else {
+            // 抓到就立刻存档，并在同一个页面里原地验一次：验不过，下次刷新还是白搭
+            let before = JdFast.loadAll().count
             JdFast.save(fromPayload: out.payloadJSON)
+            extra += "；存档\(before)→\(JdFast.loadAll().count)" + JdFast.diagnose(payloadJSON: out.payloadJSON)
+            if JdFast.loadAll().isEmpty {
+                // 存档没存上：把页面里和订单相关的那几条请求落盘，下一轮照着查
+                let caps = await WebOrderFetcher.shared.jdCapturedRequests()
+                _ = write("抓到的和订单相关的请求：\n" + caps, to: jdInPageFile())
+                extra += "；详情见 jd_inpage.txt"
+            }
+            if let saved = JdFast.last() {
+                let raw = await WebOrderFetcher.shared.inPageReplay(
+                    url: JdFast.refreshT(saved.url),
+                    method: saved.method ?? "POST",
+                    headers: JdFast.safeHeaders(saved.headers, body: saved.body ?? ""),
+                    body: saved.body ?? ""
+                )
+                extra += "；存档校验" + replayBrief(raw)
+                _ = write("URL: \(saved.url)\nMETHOD: \(saved.method ?? "")\nHEADERS: \(saved.headers)\n\n请求体前 600 字:\n\(String((saved.body ?? "").prefix(600)))\n\n存档校验: \(replayBrief(raw))",
+                          to: jdInPageFile())
+            }
         }
+        let base = out.note.replacingOccurrences(of: #" · 用时 [\d.]+ 秒"#, with: "", options: .regularExpression)
+        let cost = String(format: "%.1f", Date().timeIntervalSince(started))
         return FetchOutcome(
             orders: out.orders,
             httpStatus: out.httpStatus,
             byteCount: out.byteCount,
             rawFileURL: out.rawFileURL,
-            note: "京东手机版 " + out.note + " · 用时 " + cost + " 秒" + extra
+            note: "京东手机版 " + base + extra + " · 用时 " + cost + " 秒",
+            payloadJSON: out.payloadJSON
         )
+    }
+
+    /// 把页内重放的原始返回压成一行诊断，塞进 note
+    private static func replayBrief(_ raw: String) -> String {
+        if raw.isEmpty { return " 空返回" }
+        if raw.hasPrefix("NOPAGE") { return " 没页面" }
+        if raw.hasPrefix("TIMEOUT") { return " 超时" }
+        if raw.hasPrefix("ERR") { return " " + String(raw.dropFirst(4)) }
+        let parts = raw.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return " 格式异常" }
+        let body = String(parts[1])
+        let flag: String
+        if body.contains("orderList") { flag = "有orderList" }
+        else if body.contains("\"code\":\"") || body.contains("errorCode") { flag = "报错" }
+        else { flag = "无orderList" }
+        let head = String(body.prefix(40)).replacingOccurrences(of: "\n", with: " ")
+        return " HTTP\(parts[0])/\(body.count)字/\(flag)「\(head)」"
     }
 
     /// 淘宝 / 京东：都是前端渲染，用同一个 WebView 抓包路线，只是地址和解析器不同。
@@ -410,17 +457,17 @@ enum OrderClient {
         }
         let htmlErr = write(htmlToWrite, to: htmlFile(for: platform))
         let digestErr = write(capture.digest, to: digestFile(for: platform))
-        // 京东保留 list-jd，页内直取要用它
+        // 京东：如果这次抓包没能进存档，就在这个还活着的页面里手挑一条订单请求验一次，
+        // 至少能回答「页内重放这条路本身通不通」。存档成功的话由 fetchJd 统一验，别重复花时间。
         var jdProbeLine = ""
-        if platform == .jd, let req = JdDirect.findRequest(in: capture.payloadJSON) {
-            let fresh = req.url.replacingOccurrences(
-                of: #"(?<=[?&])t=\d+"#,
-                with: "t=\(Int(Date().timeIntervalSince1970 * 1000))",
-                options: .regularExpression
+        if platform == .jd, JdFast.loadAll().isEmpty, let req = JdDirect.findRequest(in: capture.payloadJSON) {
+            let raw = await WebOrderFetcher.shared.inPageReplay(
+                url: JdFast.refreshT(req.url),
+                method: req.method,
+                headers: JdFast.safeHeaders(req.headers, body: req.body ?? ""),
+                body: req.body ?? ""
             )
-            let probed = await WebOrderFetcher.shared.inPageFetch(fresh)
-            jdProbeLine = "；页内直取：\(probed)"
-            _ = write("URL: \(fresh)\n\n\(probed)", to: jdInPageFile())
+            jdProbeLine = "；页内验" + replayBrief(raw)
         }
         info.writeError = [pageErr, payloadErr, htmlErr, digestErr].compactMap { $0 }.joined(separator: " / ")
 
@@ -814,6 +861,7 @@ enum OrderClient {
             list.append(DebugFile(id: "tblogihtml-\(platform.rawValue)", label: "物流页源码", url: tbLogisticsHTMLFile(for: platform)))
             list.append(DebugFile(id: "tbrawhtml-\(platform.rawValue)", label: "物流直连HTML", url: tbRawHTMLFile(for: platform)))
         case .jd:
+            list.append(DebugFile(id: "jdarchive", label: "请求存档", url: JdFast.file()))
             list.append(DebugFile(id: "jddetail-\(platform.rawValue)", label: "订单详情页", url: jdDetailFile(for: platform)))
             list.append(DebugFile(id: "jdreq-\(platform.rawValue)", label: "直连请求", url: JdDirect.requestFile()))
             list.append(DebugFile(id: "jdinpage", label: "页内直取", url: jdInPageFile()))
