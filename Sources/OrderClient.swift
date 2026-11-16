@@ -272,33 +272,62 @@ enum OrderClient {
             diag.append("存档\(JdFast.ageMinutes())分钟前/未验过")
         }
 
-        // 快路二：让页面自己去拉订单。新鲜、不用等整页渲染，正常 3 秒左右。
-        let entry = await WebOrderFetcher.shared.jdOrderListFromPage(cookieHeader: cookie)
-        if entry.hasPrefix("{") {
-            let wrapped = "[" + entry + "]"
-            let orders = TaobaoJdParser.parse(platform: .jd, text: "", payloadJSON: wrapped)
-            dump.append("【页面自取】解析 \(orders.count) 条\n抓包记录前 1500 字: \(String(entry.prefix(1500)))")
-            if !orders.isEmpty {
-                JdFast.save(fromPayload: wrapped)
-                JdFast.markHit(true)
-                let cost = String(format: "%.1f", Date().timeIntervalSince(started))
-                _ = write(wrapped, to: payloadFile(for: .jd))
-                return FetchOutcome(
-                    orders: orders,
-                    httpStatus: 200,
-                    byteCount: entry.count,
-                    rawFileURL: payloadFile(for: .jd),
-                    note: "京东页面自取 \(orders.count) 条 · 用时 \(cost) 秒",
-                    payloadJSON: wrapped,
-                    authoritative: true
-                )
+        // 快路二：让页面自己去拉订单。先 my.m.jd.com（SPA 订单楼层），再 trade.m.jd.com 的订单列表页。
+        // 新鲜、不用等整页渲染；页面正常时 3 秒左右。
+        var picks: [WebOrderFetcher.JdPagePick] = []
+        let pageURLs = [
+            "https://my.m.jd.com/index.html?sceneval=2",
+            "https://trade.m.jd.com/order/orderlist_jdm.shtml"
+        ]
+        for (index, pageURL) in pageURLs.enumerated() {
+            let tag = index == 0 ? "自取my" : "自取trade"
+            let pick = await WebOrderFetcher.shared.jdOrderListFromPage(cookieHeader: cookie, urlString: pageURL)
+            picks.append(pick)
+            if !pick.entry.isEmpty {
+                let wrapped = "[" + pick.entry + "]"
+                let orders = TaobaoJdParser.parse(platform: .jd, text: "", payloadJSON: wrapped)
+                dump.append("【\(tag)】解析 \(orders.count) 条\n抓包记录前 1500 字: \(String(pick.entry.prefix(1500)))")
+                if !orders.isEmpty {
+                    JdFast.save(fromPayload: wrapped)
+                    JdFast.markHit(true)
+                    let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+                    _ = write(wrapped, to: payloadFile(for: .jd))
+                    return FetchOutcome(
+                        orders: orders,
+                        httpStatus: 200,
+                        byteCount: pick.entry.count,
+                        rawFileURL: payloadFile(for: .jd),
+                        note: "京东页面自取 \(orders.count) 条（\(tag)）· 用时 \(cost) 秒",
+                        payloadJSON: wrapped,
+                        authoritative: true
+                    )
+                }
+                diag.append(tag + ":抓到接口但0条")
+            } else {
+                diag.append(tag + ":" + pick.reason)
             }
-            diag.append("自取:抓到接口但0条")
-        } else {
-            diag.append("自取:" + entry.replacingOccurrences(of: "ERR ", with: ""))
-            dump.append("【页面自取】\(entry)")
+            dump.append("【\(tag)】\(pick.reason)\nURL: \(pageURL)\n页面正文开头: \(pick.textHead)\n接口一览: \(String(pick.captured.prefix(3000)))")
         }
-        // 慢路：打开手机版订单列表页，点「全部订单」，等页面渲染出订单号
+
+        let maxResponses = picks.map { $0.responses }.max() ?? 0
+        if maxResponses >= 6 {
+            // 页面本身跑起来了（接口一堆），但就是没有订单接口 → 京东侧降级/会话被拦。
+            // 这时再跑一遍慢路（同一个页面）只会多花 10 秒，直接报清楚。
+            dump.append("【跳过慢路】页面接口 \(maxResponses) 条但没有订单接口")
+            _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
+            let head = picks.first.map { String($0.textHead.prefix(30)) } ?? ""
+            let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+            return FetchOutcome(
+                orders: [],
+                httpStatus: 200,
+                byteCount: 0,
+                rawFileURL: jdInPageFile(),
+                note: "京东侧降级：页面 \(maxResponses) 个接口响应里没有订单接口「\(head)」· 先别连刷，过一阵再试；一直这样就重登京东 · 用时 \(cost) 秒",
+                payloadJSON: "",
+                authoritative: false
+            )
+        }
+        // 慢路：页面连接口都没跑起来时最后再试一次完整渲染
         let out = try await fetchWebOrders(
             platform: .jd,
             cookie: cookie,

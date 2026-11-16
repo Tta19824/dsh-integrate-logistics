@@ -518,16 +518,29 @@ final class WebOrderFetcher: NSObject {
         return "200|" + text
     }
 
+    /// 页面自取的结果：要么给一条抓包记录，要么说清楚为什么没拿到
+    struct JdPagePick {
+        var entry: String = ""      // 命中 orderList 的那条抓包记录（JSON）
+        var reason: String = ""     // 失败原因
+        var responses: Int = 0      // 这次页面一共抓到多少条接口响应
+        var textHead: String = ""   // 页面正文开头
+        var captured: String = ""   // 所有接口响应的概要（落盘用）
+        var url: String = ""
+    }
+
     /// 让京东页面自己去请求订单列表（不点 tab、不等渲染、不滚动），
     /// 只等 __dshCap 里出现带 orderList 的响应，然后把那一条整条交回来。
-    /// 返回一条抓包记录 `{"u":…,"r":…,"b":…}` 的 JSON；失败返回 "ERR 原因"。
     ///
-    /// 为什么需要它：存档里的 URL 放久了会变成空壳（0.36.3 实测），
-    /// 但页面自己发的请求永远是新鲜的，比等整页渲染（9–10 秒）便宜得多。
-    func jdOrderListFromPage(cookieHeader: String,
-                             urlString: String = "https://my.m.jd.com/index.html?sceneval=2",
-                             clickText: String = "全部订单", wait: Double = 9) async -> String {
-        guard let target = URL(string: urlString) else { return "ERR URL 拼错" }
+    /// 为什么需要它：存档里的 URL 放久了会变成空壳，而页面自己发的请求永远是新鲜的，
+    /// 比等整页渲染（9–10 秒）便宜得多。
+    func jdOrderListFromPage(cookieHeader: String, urlString: String,
+                             clickText: String = "全部订单", wait: Double = 6) async -> JdPagePick {
+        var pick = JdPagePick()
+        pick.url = urlString
+        guard let target = URL(string: urlString) else {
+            pick.reason = "URL 拼错"
+            return pick
+        }
         let wv = slots["list-jd"] ?? makeWebView(slot: "list-jd")
         await prefillCookies(cookieHeader, platform: .jd, force: true)
         var request = URLRequest(url: target)
@@ -540,7 +553,8 @@ final class WebOrderFetcher: NSObject {
         let deadline = started.addingTimeInterval(wait)
         var clicked = false
         let probe = "(function(){var a=window.__dshCap||[];for(var i=0;i<a.length;i++){if(String(a[i].b||'').indexOf('orderList')>=0)return '1';}return '0';})()"
-        let take = """
+        let countJS = "String((window.__dshCap||[]).length)"
+        let take = #"""
         (function(){
           var a = window.__dshCap || [];
           var best = -1;
@@ -549,21 +563,55 @@ final class WebOrderFetcher: NSObject {
           var e = a[best] || {};
           return JSON.stringify({ u: String(e.u || ''), r: e.r || null, b: String(e.b || '') });
         })()
-        """
+        """#
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: 250_000_000)
             if ((try? await wv.evaluateJavaScript(probe)) as? String) == "1" {
                 let entry = (try? await wv.evaluateJavaScript(take)) as? String ?? ""
-                if !entry.isEmpty { return entry }
+                if !entry.isEmpty {
+                    pick.entry = entry
+                    return pick
+                }
             }
+            let n = Int((try? await wv.evaluateJavaScript(countJS)) as? String ?? "0") ?? 0
+            pick.responses = n
             // 首屏没自己拉订单，就点一次「全部订单」，再继续等
             if !clicked, Date().timeIntervalSince(started) > 2.5 {
                 clicked = true
                 _ = try? await wv.evaluateJavaScript(clickTabJS([clickText]))
             }
+            // 页面已经正常跑起来（接口一堆）却始终没有订单接口：多半是京东侧降级，别死等
+            if Date().timeIntervalSince(started) > 4, n >= 8 { break }
         }
-        let entries = await entryCount(wv)
-        return "ERR 页面没抓到订单接口（接口响应 \(entries) 条）"
+        // 把这次页面到底请求了什么全部记下来，供落盘排查
+        let summaryJS = #"""
+        (function(){
+          var a = window.__dshCap || [];
+          var items = [];
+          for (var i = 0; i < a.length && i < 25; i++) {
+            var b = String(a[i].b || '');
+            var r = a[i].r || null;
+            items.push({
+              m: r ? String(r.m || '') : '',
+              u: String(a[i].u || '').slice(0, 180),
+              n: b.length,
+              h: b.slice(0, 140).replace(/\s+/g, ' ')
+            });
+          }
+          var text = document.body ? String(document.body.innerText || '') : '';
+          return JSON.stringify({ n: a.length, text: text.slice(0, 400), items: items });
+        })()
+        """#
+        if let raw = (try? await wv.evaluateJavaScript(summaryJS)) as? String, !raw.isEmpty {
+            pick.captured = raw
+            if let data = raw.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                pick.responses = (obj["n"] as? Int) ?? pick.responses
+                pick.textHead = (obj["text"] as? String) ?? ""
+            }
+        }
+        pick.reason = "页面没抓到订单接口（接口响应 \(pick.responses) 条）"
+        return pick
     }
 
     /// 在指定槽的页面里把一条请求原样重发（方法 / 头 / 请求体都由调用方给），
