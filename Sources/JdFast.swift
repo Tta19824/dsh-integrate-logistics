@@ -58,11 +58,25 @@ enum JdFast {
         return false
     }
 
-    /// 从一次 WebView 抓包结果里挑出订单接口请求并存档（按 URL 去重，最多 4 条）
+    /// 一条请求的身份：functionId + body。t / uuid 这类每次都变的参数不算，
+    /// 这样每次刷新不会把同一查询存成四份，存档里永远是最新的那条 URL。
+    private static func requestKey(_ url: String) -> String {
+        guard let comps = URLComponents(string: url) else { return url }
+        var fid = ""
+        var body = ""
+        for item in comps.queryItems ?? [] {
+            if item.name == "functionId" { fid = item.value ?? "" }
+            if item.name == "body" { body = item.value ?? "" }
+        }
+        if fid.isEmpty && body.isEmpty { return url }
+        return fid + "|" + String(body.prefix(400))
+    }
+
+    /// 从一次 WebView 抓包结果里挑出订单接口请求并存档（同一查询只留最新一条，最多 4 条）
     static func save(fromPayload payloadJSON: String) {
         guard let arr = entries(payloadJSON) else { return }
         var list = loadAll()
-        var added = 0
+        var changed = false
         for item in arr {
             let resp = item["b"] as? String ?? ""
             let entryURL = item["u"] as? String ?? ""
@@ -73,18 +87,23 @@ enum JdFast {
             if let h = req["h"] as? [String: Any] {
                 for (k, v) in h { if let s = v as? String { headers[k] = s } }
             }
-            if list.contains(where: { $0.url == url }) { continue }
-            list.append(Saved(
+            let entry = Saved(
                 url: url,
                 headers: headers,
                 savedAt: Date().timeIntervalSince1970,
-                method: (req["m"] as? String) ?? "POST",
+                method: (req["m"] as? String) ?? "GET",
                 body: req["d"] as? String ?? "",
                 hit: nil
-            ))
-            added += 1
+            )
+            let key = requestKey(url)
+            if let idx = list.firstIndex(where: { requestKey($0.url) == key }) {
+                list[idx] = entry
+            } else {
+                list.append(entry)
+            }
+            changed = true
         }
-        if added > 0 {
+        if changed {
             if list.count > 4 { list = Array(list.suffix(4)) }
             saveAll(list)
         }

@@ -464,42 +464,73 @@ final class WebOrderFetcher: NSObject {
         return wv.url?.host?.contains("jd.com") ?? false
     }
 
-    /// 在 list-jd 页面里把一条请求原样重发（方法 / 头 / 请求体都由调用方给），
-    /// 返回 "status|body"，异常时返回 "NOPAGE" / "TIMEOUT" / "ERR 原因"。
-    /// 关键是 `credentials: 'include'` + 页面自带 UA/Origin：sign 不用我们算，cookie 不用我们搬。
-    func inPageReplay(url: String, method: String, headers: [String: String], body: String, timeoutMS: Double = 6000) async -> String {
-        guard let wv = slots["list-jd"] else { return "NOPAGE" }
-        guard wv.url?.host?.isEmpty == false else { return "NOPAGE" }
-        let js = """
-        var u = args.url;
-        var m = args.method || 'POST';
-        var h = args.headers || {};
-        var b = args.body || '';
-        var ms = args.ms || 6000;
-        var opt = { credentials: 'include', method: m };
-        if (h && Object.keys(h).length > 0) opt.headers = h;
-        if (b && String(b).length > 0) opt.body = b;
-        var timer = new Promise(function (res) { setTimeout(function () { res('TIMEOUT'); }, ms); });
-        var net = fetch(u, opt).then(function (r) {
-            return r.text().then(function (t) { return String(r.status) + '|' + t; });
-        }).catch(function (e) {
-            return 'ERR ' + ((e && e.message) ? String(e.message) : 'fetch failed');
-        });
-        return Promise.race([net, timer]);
-        """
-        do {
-            let v = try await wv.callAsyncJavaScript(
-                js,
-                arguments: ["url": url, "method": method, "headers": headers, "body": body, "ms": timeoutMS],
-                in: nil,
-                in: .page
-            )
-            if let s = v as? String { return s }
-            return "ERR 返回类型 \(type(of: v))"
-        } catch {
-            let msg = error.localizedDescription
-            return "ERR " + (msg.isEmpty ? String(describing: error) : msg)
+    /// 京东那个真正发出订单请求的页面（抓到的请求头里写的就是它：
+    /// `x-referer-page: https://trade.m.jd.com/order/orderlist_jdm.shtml`）。
+    /// 单独开一个槽：如果 my.m.jd.com 的页面被 CORS 挡住，就换这个同源页面重放。
+    func ensureJdTradePage(cookieHeader: String, wait: Double = 7) async -> Bool {
+        if let wv = slots["jd-replay"], let host = wv.url?.host, host.contains("trade.m.jd.com") { return true }
+        let wv = slots["jd-replay"] ?? makeWebView(slot: "jd-replay")
+        await prefillCookies(cookieHeader, platform: .jd, force: true)
+        guard let url = URL(string: "https://trade.m.jd.com/order/orderlist_jdm.shtml") else { return false }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                         forHTTPHeaderField: "User-Agent")
+        _ = await wv.load(request)
+        let deadline = Date().addingTimeInterval(wait)
+        while Date() < deadline {
+            let alive = (try? await wv.evaluateJavaScript("(document.readyState && document.readyState !== 'loading') ? '1' : '0'")) as? String
+            if alive == "1", let host = wv.url?.host, host.contains("jd.com") { return true }
+            try? await Task.sleep(nanoseconds: 150_000_000)
         }
+        return wv.url?.host?.contains("jd.com") ?? false
+    }
+
+    /// 在指定槽的页面里把一条请求原样重发（方法 / 头 / 请求体都由调用方给），
+    /// 返回 "status|body"，异常时返回 "NOPAGE" / "TIMEOUT" / "ERR 原因"。
+    ///
+    /// 为什么不用 callAsyncJavaScript：0.36.1 里那条路把 Promise 的返回值交回来永远是 `()`
+    /// （JS 明明返回字符串，Swift 侧拿到 undefined），0.36.0 的 inPageFetch 也是同一个症状。
+    /// 改用这里已经被拼多多验证过的写法：先 evaluateJavaScript 打开发请求（不取返回值），
+    /// 再把结果写在 window.__dshReplay 上，Swift 每 120ms 轮询读一次。
+    func inPageReplay(slot: String = "list-jd", url: String, method: String, headers: [String: String], body: String, timeoutMS: Double = 6000) async -> String {
+        guard let wv = slots[slot], let host = wv.url?.host, !host.isEmpty else { return "NOPAGE" }
+        let headersJSON: String = {
+            guard let d = try? JSONSerialization.data(withJSONObject: headers, options: []),
+                  let s = String(data: d, encoding: .utf8) else { return "{}" }
+            return s
+        }()
+        let lines: [String] = [
+            "window.__dshReplay = '';",
+            "(function () {",
+            "  var opt = { credentials: 'include', method: " + Self.jsString(method) + " };",
+            "  var h = " + headersJSON + ";",
+            "  if (h && Object.keys(h).length > 0) opt.headers = h;",
+            "  var b = " + Self.jsString(body) + ";",
+            "  if (b && b.length > 0) opt.body = b;",
+            "  fetch(" + Self.jsString(url) + ", opt).then(function (r) {",
+            "    return r.text().then(function (t) { window.__dshReplay = String(r.status) + '|' + t; });",
+            "  }).catch(function (e) {",
+            "    window.__dshReplay = 'ERR ' + ((e && e.message) ? String(e.message) : 'fetch failed');",
+            "  });",
+            "})();"
+        ]
+        _ = try? await wv.evaluateJavaScript(lines.joined(separator: "\n"))
+        let tries = max(Int(timeoutMS / 120), 8)
+        for _ in 0..<tries {
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            if let s = (try? await wv.evaluateJavaScript("window.__dshReplay || ''")) as? String, !s.isEmpty {
+                return s
+            }
+        }
+        return "TIMEOUT"
+    }
+
+    /// 把 Swift 字符串变成能安全塞进 JS 源码的字面量（含引号与换行）
+    private static func jsString(_ s: String) -> String {
+        guard let d = try? JSONSerialization.data(withJSONObject: [s], options: []),
+              let t = String(data: d, encoding: .utf8), t.count >= 2 else { return "\"\"" }
+        return String(t.dropFirst().dropLast())
     }
 
     /// 把 list-jd 页面里抓到的、和京东订单接口相关的那几条请求列出来（诊断用）

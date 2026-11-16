@@ -248,49 +248,34 @@ enum OrderClient {
         guard !cookie.isEmpty else { throw FetchError.noCookie }
         let started = Date()
         var diag: [String] = []
-        // 快路：有存档就在页面里把那条已签名请求原样重放。
-        // 页内发 = cookie / UA / 指纹 / sign 全由页面自己带，我们只负责「再发一遍」。
-        // 两条尝试：先刷新 t（多数接口只把 t 当防缓存），再原样（sign 若覆盖 t 就只有这条能过）。
+        // 快路：有存档就在页面里把那条请求原样重发。
+        // 实测（0.36.1）：这条请求是 GET、**没有 sign**、参数全在 URL 里
+        // （functionId=order_list_m + body=<urlencoded JSON>），所以只要页面肯替我们发，服务端就认。
+        // 先用手上这个 my.m.jd.com 页面试；被 CORS 挡住就换真正发这条请求的 trade.m.jd.com 页面。
         if let saved = JdFast.last() {
+            let fresh = JdFast.refreshT(saved.url)
             if await WebOrderFetcher.shared.ensureJdPage(cookieHeader: cookie) {
-                var attempts: [(String, String)] = []
-                let fresh = JdFast.refreshT(saved.url)
-                if fresh != saved.url { attempts.append(("刷新t", fresh)) }
-                attempts.append(("原样", saved.url))
-                for (label, url) in attempts {
-                    let raw = await WebOrderFetcher.shared.inPageReplay(
-                        url: url,
-                        method: saved.method ?? "POST",
-                        headers: JdFast.safeHeaders(saved.headers, body: saved.body ?? ""),
-                        body: saved.body ?? ""
-                    )
-                    diag.append(label + replayBrief(raw))
-                    guard raw.hasPrefix("200|") else { continue }
-                    let body = String(raw.dropFirst(4))
-                    guard body.contains("orderList") else { continue }
-                    let wrapped = "[{\"u\":" + JdFast.jsonQuotedPublic(url) + ",\"b\":" + JdFast.jsonQuotedPublic(body) + "}]"
-                    let orders = TaobaoJdParser.parse(platform: .jd, text: "", payloadJSON: wrapped)
-                    if orders.isEmpty {
-                        diag.append("解析0条")
-                        continue
-                    }
-                    let cost = String(format: "%.1f", Date().timeIntervalSince(started))
-                    _ = write(wrapped, to: payloadFile(for: .jd))
-                    return FetchOutcome(
-                        orders: orders,
-                        httpStatus: 200,
-                        byteCount: body.count,
-                        rawFileURL: payloadFile(for: .jd),
-                        note: "京东页内直取 \(orders.count) 条（\(label)）· 用时 \(cost) 秒",
-                        payloadJSON: wrapped,
-                        authoritative: true
-                    )
+                if let out = await jdReplayOutcome(slot: "list-jd", label: "my·刷新t", url: fresh,
+                                                   saved: saved, timeoutMS: 3500, started: started, diag: &diag) {
+                    return out
                 }
-                _ = write("URL: \(saved.url)\nMETHOD: \(saved.method ?? "")\nHEADERS: \(saved.headers)\n\n请求体前 600 字:\n\(String((saved.body ?? "").prefix(600)))\n\n重放结果: \(diag.joined(separator: " / "))",
-                          to: jdInPageFile())
             } else {
                 diag.append("无页面")
             }
+            if await WebOrderFetcher.shared.ensureJdTradePage(cookieHeader: cookie) {
+                if let out = await jdReplayOutcome(slot: "jd-replay", label: "trade·刷新t", url: fresh,
+                                                   saved: saved, timeoutMS: 4000, started: started, diag: &diag) {
+                    return out
+                }
+                if let out = await jdReplayOutcome(slot: "jd-replay", label: "trade·原样", url: saved.url,
+                                                   saved: saved, timeoutMS: 4000, started: started, diag: &diag) {
+                    return out
+                }
+            } else {
+                diag.append("trade页没打开")
+            }
+            _ = write("URL: \(saved.url)\nMETHOD: \(saved.method ?? "")\nHEADERS: \(saved.headers)\n\n请求体前 600 字:\n\(String((saved.body ?? "").prefix(600)))\n\n重放结果: \(diag.joined(separator: " / "))",
+                      to: jdInPageFile())
         } else {
             diag.append("无存档")
         }
@@ -321,9 +306,10 @@ enum OrderClient {
             if let saved = JdFast.last() {
                 let raw = await WebOrderFetcher.shared.inPageReplay(
                     url: JdFast.refreshT(saved.url),
-                    method: saved.method ?? "POST",
+                    method: saved.method ?? "GET",
                     headers: JdFast.safeHeaders(saved.headers, body: saved.body ?? ""),
-                    body: saved.body ?? ""
+                    body: saved.body ?? "",
+                    timeoutMS: 4000
                 )
                 extra += "；存档校验" + replayBrief(raw)
                 _ = write("URL: \(saved.url)\nMETHOD: \(saved.method ?? "")\nHEADERS: \(saved.headers)\n\n请求体前 600 字:\n\(String((saved.body ?? "").prefix(600)))\n\n存档校验: \(replayBrief(raw))",
@@ -339,6 +325,40 @@ enum OrderClient {
             rawFileURL: out.rawFileURL,
             note: "京东手机版 " + base + extra + " · 用时 " + cost + " 秒",
             payloadJSON: out.payloadJSON
+        )
+    }
+
+    /// 试一次页内重放；成功就拼成 FetchOutcome 返回，失败只往 diag 里记一句
+    private static func jdReplayOutcome(slot: String, label: String, url: String, saved: JdFast.Saved,
+                                        timeoutMS: Double, started: Date, diag: inout [String]) async -> FetchOutcome? {
+        let raw = await WebOrderFetcher.shared.inPageReplay(
+            slot: slot,
+            url: url,
+            method: saved.method ?? "GET",
+            headers: JdFast.safeHeaders(saved.headers, body: saved.body ?? ""),
+            body: saved.body ?? "",
+            timeoutMS: timeoutMS
+        )
+        diag.append(label + replayBrief(raw))
+        guard raw.hasPrefix("200|") else { return nil }
+        let body = String(raw.dropFirst(4))
+        guard body.contains("orderList") else { return nil }
+        let wrapped = "[{\"u\":" + JdFast.jsonQuotedPublic(url) + ",\"b\":" + JdFast.jsonQuotedPublic(body) + "}]"
+        let orders = TaobaoJdParser.parse(platform: .jd, text: "", payloadJSON: wrapped)
+        guard !orders.isEmpty else {
+            diag.append("解析0条")
+            return nil
+        }
+        let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+        _ = write(wrapped, to: payloadFile(for: .jd))
+        return FetchOutcome(
+            orders: orders,
+            httpStatus: 200,
+            byteCount: body.count,
+            rawFileURL: payloadFile(for: .jd),
+            note: "京东页内直取 \(orders.count) 条（\(label)）· 用时 \(cost) 秒",
+            payloadJSON: wrapped,
+            authoritative: true
         )
     }
 
