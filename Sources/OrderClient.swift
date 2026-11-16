@@ -248,44 +248,55 @@ enum OrderClient {
         guard !cookie.isEmpty else { throw FetchError.noCookie }
         let started = Date()
         var diag: [String] = []
-        // 快路：有存档就在页面里把那条请求原样重发。
-        // 实测（0.36.1）：这条请求是 GET、**没有 sign**、参数全在 URL 里
-        // （functionId=order_list_m + body=<urlencoded JSON>），所以只要页面肯替我们发，服务端就认。
-        // 先用手上这个 my.m.jd.com 页面试；被 CORS 挡住就换真正发这条请求的 trade.m.jd.com 页面。
-        if let saved = JdFast.last() {
+        var dump: [String] = []
+        // 快路一：直开。只在这条存档「新鲜且上次验过」时才走 —— 0.36.3 实测：
+        // 两小时前的 URL 重放回来是 `{"code":"0","message":"success"…}` 的空壳（没有 orderList），
+        // 所以 URL 里的 x-api-eid-token/会话参数是**有时效**的，刷新 t 复活不了。
+        if let saved = JdFast.last(), JdFast.isTrusted() {
             let fresh = JdFast.refreshT(saved.url)
-            let safeHeaders = JdFast.safeHeaders(saved.headers, body: saved.body ?? "")
-            // 第一条：直接把这 URL 当网页打开（第一方请求，没有 CORS，也不用页面 JS），通常半秒出结果
-            let direct = await WebOrderFetcher.shared.jdLoadJSONDirect(
-                url: fresh, headers: safeHeaders, cookieHeader: cookie, timeout: 6
+            let raw = await WebOrderFetcher.shared.jdLoadJSONDirect(
+                url: fresh,
+                headers: JdFast.safeHeaders(saved.headers, body: saved.body ?? ""),
+                cookieHeader: cookie,
+                timeout: 6
             )
-            if let out = jdOutcome(raw: direct, label: "直开", url: fresh, started: started, diag: &diag) {
+            if let out = jdOutcome(raw: raw, label: "直开", url: fresh, started: started, diag: &diag) {
+                JdFast.markHit(true)
                 return out
             }
-            if await WebOrderFetcher.shared.ensureJdPage(cookieHeader: cookie) {
-                if let out = await jdReplayOutcome(slot: "list-jd", label: "my·刷新t", url: fresh,
-                                                   saved: saved, timeoutMS: 3500, started: started, diag: &diag) {
-                    return out
-                }
-            } else {
-                diag.append("无页面")
-            }
-            if await WebOrderFetcher.shared.ensureJdTradePage(cookieHeader: cookie) {
-                if let out = await jdReplayOutcome(slot: "jd-replay", label: "trade·刷新t", url: fresh,
-                                                   saved: saved, timeoutMS: 4000, started: started, diag: &diag) {
-                    return out
-                }
-                if let out = await jdReplayOutcome(slot: "jd-replay", label: "trade·原样", url: saved.url,
-                                                   saved: saved, timeoutMS: 4000, started: started, diag: &diag) {
-                    return out
-                }
-            } else {
-                diag.append("trade页没打开")
-            }
-            _ = write("URL: \(saved.url)\nMETHOD: \(saved.method ?? "")\nHEADERS: \(saved.headers)\n\n请求体前 600 字:\n\(String((saved.body ?? "").prefix(600)))\n\n重放结果: \(diag.joined(separator: " / "))",
-                      to: jdInPageFile())
-        } else {
+            JdFast.markHit(false)
+            dump.append("【直开】存档 age=\(JdFast.ageMinutes()) 分钟\nURL: \(fresh)\n结果: \(String(raw.prefix(1500)))")
+        } else if JdFast.last() == nil {
             diag.append("无存档")
+        } else {
+            diag.append("存档\(JdFast.ageMinutes())分钟前/未验过")
+        }
+
+        // 快路二：让页面自己去拉订单。新鲜、不用等整页渲染，正常 3 秒左右。
+        let entry = await WebOrderFetcher.shared.jdOrderListFromPage(cookieHeader: cookie)
+        if entry.hasPrefix("{") {
+            let wrapped = "[" + entry + "]"
+            let orders = TaobaoJdParser.parse(platform: .jd, text: "", payloadJSON: wrapped)
+            dump.append("【页面自取】解析 \(orders.count) 条\n抓包记录前 1500 字: \(String(entry.prefix(1500)))")
+            if !orders.isEmpty {
+                JdFast.save(fromPayload: wrapped)
+                JdFast.markHit(true)
+                let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+                _ = write(wrapped, to: payloadFile(for: .jd))
+                return FetchOutcome(
+                    orders: orders,
+                    httpStatus: 200,
+                    byteCount: entry.count,
+                    rawFileURL: payloadFile(for: .jd),
+                    note: "京东页面自取 \(orders.count) 条 · 用时 \(cost) 秒",
+                    payloadJSON: wrapped,
+                    authoritative: true
+                )
+            }
+            diag.append("自取:抓到接口但0条")
+        } else {
+            diag.append("自取:" + entry.replacingOccurrences(of: "ERR ", with: ""))
+            dump.append("【页面自取】\(entry)")
         }
         // 慢路：打开手机版订单列表页，点「全部订单」，等页面渲染出订单号
         let out = try await fetchWebOrders(
@@ -296,34 +307,33 @@ enum OrderClient {
             clickTexts: ["全部订单"],
             clickReadyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
         )
-        var extra = "；页内重放：" + diag.joined(separator: " / ")
+        var extra = "；快路：" + diag.joined(separator: " / ")
         if out.orders.isEmpty {
             let diag2 = await jdPCListDiagnostic(cookie: cookie)
             extra += "；" + diag2
         } else {
-            // 抓到就立刻存档，并在同一个页面里原地验一次：验不过，下次刷新还是白搭
+            // 抓到就立刻存档，并马上用「直开」验一次 —— 验过，下次刷新才敢走快路
             let before = JdFast.loadAll().count
             JdFast.save(fromPayload: out.payloadJSON)
             extra += "；存档\(before)→\(JdFast.loadAll().count)" + JdFast.diagnose(payloadJSON: out.payloadJSON)
-            if JdFast.loadAll().isEmpty {
-                // 存档没存上：把页面里和订单相关的那几条请求落盘，下一轮照着查
-                let caps = await WebOrderFetcher.shared.jdCapturedRequests()
-                _ = write("抓到的和订单相关的请求：\n" + caps, to: jdInPageFile())
-                extra += "；详情见 jd_inpage.txt"
-            }
             if let saved = JdFast.last() {
-                let raw = await WebOrderFetcher.shared.inPageReplay(
+                let raw = await WebOrderFetcher.shared.jdLoadJSONDirect(
                     url: JdFast.refreshT(saved.url),
-                    method: saved.method ?? "GET",
                     headers: JdFast.safeHeaders(saved.headers, body: saved.body ?? ""),
-                    body: saved.body ?? "",
-                    timeoutMS: 4000
+                    cookieHeader: cookie,
+                    timeout: 6
                 )
                 extra += "；存档校验" + replayBrief(raw)
-                _ = write("URL: \(saved.url)\nMETHOD: \(saved.method ?? "")\nHEADERS: \(saved.headers)\n\n请求体前 600 字:\n\(String((saved.body ?? "").prefix(600)))\n\n存档校验: \(replayBrief(raw))",
-                          to: jdInPageFile())
+                JdFast.markHit(raw.hasPrefix("200|") && raw.contains("orderList"))
+                dump.append("【存档校验】刚存下的 URL\nURL: \(saved.url)\n结果: \(String(raw.prefix(1500)))")
+            } else {
+                let caps = await WebOrderFetcher.shared.jdCapturedRequests()
+                dump.append("【没存上】抓到的和订单相关的请求：\n" + caps)
+                extra += "；存档没存上（详情见 jd_inpage.txt）"
             }
         }
+        dump.append("【note】" + diag.joined(separator: " / "))
+        _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
         let base = out.note.replacingOccurrences(of: #" · 用时 [\d.]+ 秒"#, with: "", options: .regularExpression)
         let cost = String(format: "%.1f", Date().timeIntervalSince(started))
         return FetchOutcome(
@@ -385,12 +395,19 @@ enum OrderClient {
         let parts = raw.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 2 else { return " 格式异常" }
         let body = String(parts[1])
-        let flag: String
-        if body.contains("orderList") { flag = "有orderList" }
-        else if body.contains("\"code\":\"") || body.contains("errorCode") { flag = "报错" }
-        else { flag = "无orderList" }
-        let head = String(body.prefix(40)).replacingOccurrences(of: "\n", with: " ")
-        return " HTTP\(parts[0])/\(body.count)字/\(flag)「\(head)」"
+        // 能解析成 JSON 就报出键名，比只给前 40 字有信息量（例如 code0 的空壳长什么样）
+        var shape = body.contains("orderList") ? "有orderList" : ""
+        if let data = body.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            shape = "J{" + obj.keys.sorted().prefix(5).joined(separator: ",") + "}"
+            if let inner = obj["body"] as? [String: Any] {
+                shape += "body{" + inner.keys.sorted().prefix(5).joined(separator: ",") + "}"
+            }
+        } else if shape.isEmpty {
+            shape = "非JSON"
+        }
+        let head = String(body.prefix(26)).replacingOccurrences(of: "\n", with: " ")
+        return " HTTP\(parts[0])/\(body.count)字/\(shape)「\(head)」"
     }
 
     /// 淘宝 / 京东：都是前端渲染，用同一个 WebView 抓包路线，只是地址和解析器不同。

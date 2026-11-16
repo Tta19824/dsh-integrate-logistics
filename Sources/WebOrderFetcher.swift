@@ -489,7 +489,11 @@ final class WebOrderFetcher: NSObject {
     /// 直接把京东那条接口 URL 当网页打开：浏览器级的第一方请求，
     /// 没有 CORS 问题、不用跑页面 JS，响应体本身就是一份 JSON 文档，读 innerText 就行。
     /// 返回 "200|body" 或 "ERR 原因"。
-    func jdLoadJSONDirect(url: String, headers: [String: String], cookieHeader: String, timeout: Double = 6) async -> String {
+    /// 注意：不补 Referer 时京东网关会回 `{"code":"1","echo":"cross-origin request…"}`（0.36.3 实测），
+    /// 所以这里默认带上那条请求自己的 x-referer-page。
+    func jdLoadJSONDirect(url: String, headers: [String: String], cookieHeader: String,
+                          referer: String = "https://trade.m.jd.com/order/orderlist_jdm.shtml",
+                          timeout: Double = 6) async -> String {
         guard let target = URL(string: url) else { return "ERR URL 拼错" }
         let wv = slots["jd-json"] ?? makeWebView(slot: "jd-json")
         await prefillCookies(cookieHeader, platform: .jd, force: true)
@@ -497,7 +501,11 @@ final class WebOrderFetcher: NSObject {
         request.timeoutInterval = timeout
         request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
                          forHTTPHeaderField: "User-Agent")
-        for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
+        if !referer.isEmpty { request.setValue(referer, forHTTPHeaderField: "Referer") }
+        for (k, v) in headers {
+            if k.lowercased() == "referer" || k.lowercased() == "user-agent" { continue }
+            request.setValue(v, forHTTPHeaderField: k)
+        }
         _ = await wv.load(request)
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -508,6 +516,54 @@ final class WebOrderFetcher: NSObject {
         let text = (try? await wv.evaluateJavaScript("document.body ? document.body.innerText : ''")) as? String ?? ""
         if text.isEmpty { return "ERR 空文档" }
         return "200|" + text
+    }
+
+    /// 让京东页面自己去请求订单列表（不点 tab、不等渲染、不滚动），
+    /// 只等 __dshCap 里出现带 orderList 的响应，然后把那一条整条交回来。
+    /// 返回一条抓包记录 `{"u":…,"r":…,"b":…}` 的 JSON；失败返回 "ERR 原因"。
+    ///
+    /// 为什么需要它：存档里的 URL 放久了会变成空壳（0.36.3 实测），
+    /// 但页面自己发的请求永远是新鲜的，比等整页渲染（9–10 秒）便宜得多。
+    func jdOrderListFromPage(cookieHeader: String,
+                             urlString: String = "https://my.m.jd.com/index.html?sceneval=2",
+                             clickText: String = "全部订单", wait: Double = 9) async -> String {
+        guard let target = URL(string: urlString) else { return "ERR URL 拼错" }
+        let wv = slots["list-jd"] ?? makeWebView(slot: "list-jd")
+        await prefillCookies(cookieHeader, platform: .jd, force: true)
+        var request = URLRequest(url: target)
+        request.timeoutInterval = 20
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                         forHTTPHeaderField: "User-Agent")
+        _ = await wv.load(request)
+
+        let started = Date()
+        let deadline = started.addingTimeInterval(wait)
+        var clicked = false
+        let probe = "(function(){var a=window.__dshCap||[];for(var i=0;i<a.length;i++){if(String(a[i].b||'').indexOf('orderList')>=0)return '1';}return '0';})()"
+        let take = """
+        (function(){
+          var a = window.__dshCap || [];
+          var best = -1;
+          for (var i = 0; i < a.length; i++) { if (String(a[i].b || '').indexOf('orderList') >= 0) best = i; }
+          if (best < 0) return '';
+          var e = a[best] || {};
+          return JSON.stringify({ u: String(e.u || ''), r: e.r || null, b: String(e.b || '') });
+        })()
+        """
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            if ((try? await wv.evaluateJavaScript(probe)) as? String) == "1" {
+                let entry = (try? await wv.evaluateJavaScript(take)) as? String ?? ""
+                if !entry.isEmpty { return entry }
+            }
+            // 首屏没自己拉订单，就点一次「全部订单」，再继续等
+            if !clicked, Date().timeIntervalSince(started) > 2.5 {
+                clicked = true
+                _ = try? await wv.evaluateJavaScript(clickTabJS([clickText]))
+            }
+        }
+        let entries = await entryCount(wv)
+        return "ERR 页面没抓到订单接口（接口响应 \(entries) 条）"
     }
 
     /// 在指定槽的页面里把一条请求原样重发（方法 / 头 / 请求体都由调用方给），

@@ -43,6 +43,29 @@ enum JdFast {
     /// 最近一条存档的 URL（兼容老调用）
     static func lastURL() -> String? { loadAll().last?.url }
 
+    /// 存档多久以前的（分钟）
+    static func ageMinutes() -> Int {
+        guard let last = loadAll().last else { return -1 }
+        return Int((Date().timeIntervalSince1970 - last.savedAt) / 60)
+    }
+
+    /// 这条存档能不能信：刚存下不久，而且上次重放确实拿到过订单。
+    /// 依据 0.36.3 实测：两小时前存下的 URL 重放回来是 code 0 的空壳，
+    /// 说明 URL 里的 x-api-eid-token / 会话参数是有时效的，不是刷新一下 t 就能复活。
+    static func isTrusted(maxAgeMinutes: Int = 12) -> Bool {
+        guard let last = loadAll().last else { return false }
+        if last.hit != 1 { return false }
+        return Int(Date().timeIntervalSince1970 - last.savedAt) / 60 <= maxAgeMinutes
+    }
+
+    /// 记一次重放结果（成功/失败），下次据此判断还要不要走快路
+    static func markHit(_ ok: Bool) {
+        var list = loadAll()
+        guard !list.isEmpty else { return }
+        list[list.count - 1].hit = ok ? 1 : 0
+        saveAll(list)
+    }
+
     // MARK: - 存档
 
     private static func entries(_ payloadJSON: String) -> [[String: Any]]? {
