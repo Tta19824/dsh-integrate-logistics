@@ -65,7 +65,7 @@ enum TbFast {
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue(cookie, forHTTPHeaderField: "Cookie")
-        req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        req.setValue(UserAgent.macOS, forHTTPHeaderField: "User-Agent")
         req.setValue("https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm", forHTTPHeaderField: "Referer")
         req.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
         var allowed = CharacterSet.alphanumerics

@@ -324,7 +324,7 @@ final class WebOrderFetcher: NSObject {
         await prefillCookies(cookieHeader, platform: platform, force: platform == .jd)
         var request = URLRequest(url: url)
         request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            UserAgent.iOS,
             forHTTPHeaderField: "User-Agent"
         )
         _ = try? await wv.load(request)
@@ -452,7 +452,7 @@ final class WebOrderFetcher: NSObject {
         guard let url = URL(string: "https://my.m.jd.com/index.html?sceneval=2") else { return false }
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        request.setValue(UserAgent.iOS,
                          forHTTPHeaderField: "User-Agent")
         _ = await wv.load(request)
         let deadline = Date().addingTimeInterval(wait)
@@ -474,7 +474,7 @@ final class WebOrderFetcher: NSObject {
         guard let url = URL(string: "https://trade.m.jd.com/order/orderlist_jdm.shtml") else { return false }
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        request.setValue(UserAgent.iOS,
                          forHTTPHeaderField: "User-Agent")
         _ = await wv.load(request)
         let deadline = Date().addingTimeInterval(wait)
@@ -499,7 +499,7 @@ final class WebOrderFetcher: NSObject {
         await prefillCookies(cookieHeader, platform: .jd, force: true)
         var request = URLRequest(url: target)
         request.timeoutInterval = timeout
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        request.setValue(UserAgent.iOS,
                          forHTTPHeaderField: "User-Agent")
         if !referer.isEmpty { request.setValue(referer, forHTTPHeaderField: "Referer") }
         for (k, v) in headers {
@@ -545,7 +545,7 @@ final class WebOrderFetcher: NSObject {
         await prefillCookies(cookieHeader, platform: .jd, force: true)
         var request = URLRequest(url: target)
         request.timeoutInterval = 20
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        request.setValue(UserAgent.iOS,
                          forHTTPHeaderField: "User-Agent")
         _ = await wv.load(request)
 
@@ -719,7 +719,7 @@ final class WebOrderFetcher: NSObject {
             if let userAgent, !userAgent.isEmpty {
                 request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
             } else if userAgent == nil {
-                request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+                request.setValue(UserAgent.iOS, forHTTPHeaderField: "User-Agent")
             }
             if let referer, !referer.isEmpty {
                 request.setValue(referer, forHTTPHeaderField: "Referer")
@@ -1060,6 +1060,8 @@ final class WebOrderFetcher: NSObject {
             WKUserScript(source: hookScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         )
         let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 820), configuration: cfg)
+        // 隐藏抓包槽也必须用登录时那套 UA，否则「登录」和「抓单」在京东眼里是两台设备
+        UserAgent.apply(to: wv)
         wv.alpha = 0.02
         wv.isUserInteractionEnabled = false
         attach(wv)

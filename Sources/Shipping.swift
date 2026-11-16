@@ -19,7 +19,7 @@ enum ShippingClient {
         request.timeoutInterval = 12
         request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
         request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            UserAgent.iOS,
             forHTTPHeaderField: "User-Agent"
         )
         request.setValue("https://mobile.pinduoduo.com/order.html", forHTTPHeaderField: "Referer")
@@ -97,7 +97,7 @@ enum ShippingClient {
         request.timeoutInterval = 12
         request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
         request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            UserAgent.iOS,
             forHTTPHeaderField: "User-Agent"
         )
         request.setValue("https://mobile.pinduoduo.com/order.html", forHTTPHeaderField: "Referer")
@@ -138,7 +138,7 @@ enum TaobaoListHTML {
         var request = URLRequest(url: url)
         request.timeoutInterval = 12
         request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        request.setValue(UserAgent.macOS, forHTTPHeaderField: "User-Agent")
         request.setValue("https://buyertrade.taobao.com/", forHTTPHeaderField: "Referer")
         request.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
         request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
@@ -161,7 +161,7 @@ enum TaobaoLogistics {
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
         request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        request.setValue(UserAgent.macOS, forHTTPHeaderField: "User-Agent")
         request.setValue("https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm", forHTTPHeaderField: "Referer")
         request.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
@@ -178,7 +178,7 @@ enum TaobaoLogistics {
         request.timeoutInterval = 10
         request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
         request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+            UserAgent.macOS,
             forHTTPHeaderField: "User-Agent"
         )
         request.setValue("https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm", forHTTPHeaderField: "Referer")

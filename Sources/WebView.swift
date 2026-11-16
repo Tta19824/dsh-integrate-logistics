@@ -12,10 +12,6 @@ struct WebView: UIViewRepresentable {
     var onFinish: ((WKNavigation?) -> Void)?
     var onReady: ((WKWebView) -> Void)?
 
-    private static let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-    private static let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
-
-
     private static let jumpGuardScript = """
     (function(){
       try {
@@ -86,7 +82,7 @@ struct WebView: UIViewRepresentable {
         config.websiteDataStore = .default()
         config.allowsInlineMediaPlayback = true
         config.userContentController.addUserScript(
-            WKUserScript(source: Self.jumpGuardScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+            WKUserScript(source: Self.jumpGuardScript, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         )
         if autoQR {
             config.userContentController.addUserScript(
@@ -97,7 +93,8 @@ struct WebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
-        webView.customUserAgent = desktop ? Self.desktopUA : nil
+        // 身份要和抓单请求一致（见 UserAgent 文件头注释），否则京东会把同一份会话认成两台设备
+        UserAgent.apply(to: webView, desktop: desktop)
         onReady?(webView)
 
         if clearDomains.isEmpty {

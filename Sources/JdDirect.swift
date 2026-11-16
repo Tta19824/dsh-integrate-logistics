@@ -53,7 +53,7 @@ enum JdDirect {
             r.setValue(v, forHTTPHeaderField: k)
         }
         // 浏览器自己补的头，JS 抓不到，重放时手动补齐
-        let ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        let ua = UserAgent.iOS
         let defaults: [(String, String)] = [
             ("User-Agent", ua),
             ("Accept", "application/json, text/plain, */*"),
@@ -92,7 +92,7 @@ enum JdDirect {
         var req = URLRequest(url: url)
         req.timeoutInterval = 12
         req.setValue(cookie, forHTTPHeaderField: "Cookie")
-        req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        req.setValue(UserAgent.macOS, forHTTPHeaderField: "User-Agent")
         req.setValue("https://www.jd.com/", forHTTPHeaderField: "Referer")
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)

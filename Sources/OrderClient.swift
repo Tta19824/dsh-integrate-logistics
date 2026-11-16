@@ -249,6 +249,14 @@ enum OrderClient {
         let started = Date()
         var diag: [String] = []
         var dump: [String] = []
+        // 排查风控时最先要看的就是「这次以什么身份去的」，所以把 UA 和凭证时间写在最前面
+        var stampText = "未知"
+        if let at = CookieStore.savedAt(for: .jd) {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MM-dd HH:mm"
+            stampText = formatter.string(from: at)
+        }
+        dump.append("【身份】\(UserAgent.iOS)\n【凭证】\(cookie.count) 字节·存于 \(stampText)")
         // 快路一：直开。只在这条存档「新鲜且上次验过」时才走 —— 0.36.3 实测：
         // 两小时前的 URL 重放回来是 `{"code":"0","message":"success"…}` 的空壳（没有 orderList），
         // 所以 URL 里的 x-api-eid-token/会话参数是**有时效**的，刷新 t 复活不了。
@@ -442,8 +450,9 @@ enum OrderClient {
     /// 淘宝 / 京东：都是前端渲染，用同一个 WebView 抓包路线，只是地址和解析器不同。
     private static func fetchWebOrders(platform: Platform, cookie: String, urls: [String], seconds: Double, readyJS: String? = nil, clickTexts: [String] = [], clickReadyJS: String? = nil) async throws -> FetchOutcome {
         let started = Date()
-        let mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-        let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+        // 统一用真机版本的 Safari UA（见 UserAgent 文件头注释）
+        let mobileUA = UserAgent.iOS
+        let desktopUA = UserAgent.macOS
 
         // 每个地址先用手机 UA 试；PC 版地址再补一次桌面 UA
         // 淘宝的 H5 订单页没有下单时间和快递公司，PC 版（buyertrade）才有；所以 PC 版排前面。
@@ -795,7 +804,7 @@ enum OrderClient {
     /// 直接请求同一个订单页，换三种 UA，看谁能让服务端直接吐出订单
     private static func probeUserAgents(cookie: String, url: URL) async -> [String] {
         let uas: [(String, String)] = [
-            ("Safari", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"),
+            ("Safari", UserAgent.iOS),
             ("微信", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.49(0x18003133) NetType/WIFI Language/zh_CN"),
             ("拼多多App", "Pinduoduo/6.90.0 (iPhone; iOS 17.0; Scale/3.00)")
         ]
