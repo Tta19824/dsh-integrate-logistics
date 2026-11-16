@@ -486,6 +486,30 @@ final class WebOrderFetcher: NSObject {
         return wv.url?.host?.contains("jd.com") ?? false
     }
 
+    /// 直接把京东那条接口 URL 当网页打开：浏览器级的第一方请求，
+    /// 没有 CORS 问题、不用跑页面 JS，响应体本身就是一份 JSON 文档，读 innerText 就行。
+    /// 返回 "200|body" 或 "ERR 原因"。
+    func jdLoadJSONDirect(url: String, headers: [String: String], cookieHeader: String, timeout: Double = 6) async -> String {
+        guard let target = URL(string: url) else { return "ERR URL 拼错" }
+        let wv = slots["jd-json"] ?? makeWebView(slot: "jd-json")
+        await prefillCookies(cookieHeader, platform: .jd, force: true)
+        var request = URLRequest(url: target)
+        request.timeoutInterval = timeout
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                         forHTTPHeaderField: "User-Agent")
+        for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
+        _ = await wv.load(request)
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let state = (try? await wv.evaluateJavaScript("String(document.readyState)")) as? String ?? ""
+            if state == "complete" { break }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+        let text = (try? await wv.evaluateJavaScript("document.body ? document.body.innerText : ''")) as? String ?? ""
+        if text.isEmpty { return "ERR 空文档" }
+        return "200|" + text
+    }
+
     /// 在指定槽的页面里把一条请求原样重发（方法 / 头 / 请求体都由调用方给），
     /// 返回 "status|body"，异常时返回 "NOPAGE" / "TIMEOUT" / "ERR 原因"。
     ///

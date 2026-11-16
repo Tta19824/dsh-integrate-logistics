@@ -254,6 +254,14 @@ enum OrderClient {
         // 先用手上这个 my.m.jd.com 页面试；被 CORS 挡住就换真正发这条请求的 trade.m.jd.com 页面。
         if let saved = JdFast.last() {
             let fresh = JdFast.refreshT(saved.url)
+            let safeHeaders = JdFast.safeHeaders(saved.headers, body: saved.body ?? "")
+            // 第一条：直接把这 URL 当网页打开（第一方请求，没有 CORS，也不用页面 JS），通常半秒出结果
+            let direct = await WebOrderFetcher.shared.jdLoadJSONDirect(
+                url: fresh, headers: safeHeaders, cookieHeader: cookie, timeout: 6
+            )
+            if let out = jdOutcome(raw: direct, label: "直开", url: fresh, started: started, diag: &diag) {
+                return out
+            }
             if await WebOrderFetcher.shared.ensureJdPage(cookieHeader: cookie) {
                 if let out = await jdReplayOutcome(slot: "list-jd", label: "my·刷新t", url: fresh,
                                                    saved: saved, timeoutMS: 3500, started: started, diag: &diag) {
@@ -339,6 +347,12 @@ enum OrderClient {
             body: saved.body ?? "",
             timeoutMS: timeoutMS
         )
+        return jdOutcome(raw: raw, label: label, url: url, started: started, diag: &diag)
+    }
+
+    /// 把一次重放结果（"status|body" 那种）变成订单；失败记一句诊断返回 nil
+    private static func jdOutcome(raw: String, label: String, url: String, started: Date,
+                                  diag: inout [String]) -> FetchOutcome? {
         diag.append(label + replayBrief(raw))
         guard raw.hasPrefix("200|") else { return nil }
         let body = String(raw.dropFirst(4))
