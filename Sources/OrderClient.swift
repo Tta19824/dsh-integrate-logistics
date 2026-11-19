@@ -174,6 +174,11 @@ enum OrderClient {
     }
 
     static func fetch(platform: Platform) async throws -> FetchOutcome {
+        // 京东允许「手机版没 cookie、但有电脑版 thor/pin」—— 那条活路由 fetchJd 自己判断，
+        // 别在这里一刀切掉（0.36.14 实测：电脑版登上了，刷新还是「先去登录」）。
+        if platform == .jd {
+            return try await fetchJd(cookie: CookieStore.load(for: .jd) ?? "")
+        }
         guard let cookie = CookieStore.load(for: platform), !cookie.isEmpty else {
             throw FetchError.noCookie
         }
@@ -316,7 +321,6 @@ enum OrderClient {
     }
 
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
-        guard !cookie.isEmpty else { throw FetchError.noCookie }
         let started = Date()
         var diag: [String] = []
         var dump: [String] = []
@@ -328,6 +332,34 @@ enum OrderClient {
             stampText = formatter.string(from: at)
         }
         dump.append("【版本】\(Self.appVersion())\n【身份】\(UserAgent.iOS)\n【凭证】\(cookie.count) 字节·存于 \(stampText)")
+        // 手机版 cookie 没了、但电脑版（thor/pin）还在：直接走电脑版。
+        // 以前这里先 throw noCookie，结果「电脑版明明登上了」却被一句「先去登录」堵死。
+        if cookie.isEmpty {
+            guard let pcCookie = CookieStore.loadPc(for: .jd), pcCookie.contains("thor=") else {
+                _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
+                throw FetchError.noCookie
+            }
+            let pcStart = Date()
+            let pc = await jdPCRows(cookie: pcCookie)
+            dump.append(pc.dump)
+            diag.append(pc.diag)
+            diag.append("PC:\(String(format: "%.1f", Date().timeIntervalSince(pcStart)))s")
+            dump.append("【手机版】没有 cookie，这一趟只走电脑版")
+            _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
+            guard !pc.orders.isEmpty else {
+                throw FetchError.note("电脑版已登录，但订单页里没解析到订单 —— 发「调试 · 抓取文件 → 京东 → 电脑版列表」给我")
+            }
+            let pcCost = String(format: "%.1f", Date().timeIntervalSince(started))
+            return FetchOutcome(
+                orders: pc.orders,
+                httpStatus: 200,
+                byteCount: pc.orders.count,
+                rawFileURL: jdPCListFile(),
+                note: "京东电脑版 \(pc.orders.count) 条（手机版未登录）· 用时 \(pcCost) 秒",
+                payloadJSON: "",
+                authoritative: true
+            )
+        }
         // 电脑版（thor/pin）不再放最前面：它有 1.5～2 秒的桌面渲染开销，手机版正常时用不上。
         // 现在它在手机版那条路失败之后才跑（见下面的「快路三」）。
         // 快路一：直开。只在这条存档「新鲜且上次验过」时才走 —— 0.36.3 实测：

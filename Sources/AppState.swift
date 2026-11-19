@@ -40,7 +40,11 @@ final class AppState: ObservableObject {
     }
 
     func isLoggedIn(_ platform: Platform) -> Bool {
-        CookieStore.hasLogin(CookieStore.load(for: platform), platform: platform)
+        if CookieStore.hasLogin(CookieStore.load(for: platform), platform: platform) { return true }
+        // 京东有电脑版会话（thor/pin）也算登录：手机版失效时它是唯一的活口，
+        // 以前这里只认 pt_key，电脑版登得好好的，界面还是一句「先去登录」。
+        if platform == .jd, hasPcLogin(platform) { return true }
+        return false
     }
 
     func loginTime(_ platform: Platform) -> Date? {
