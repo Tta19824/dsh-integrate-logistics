@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 
 struct FetchOutcome {
     var orders: [Order]
@@ -307,10 +307,12 @@ enum OrderClient {
                   pickupCode: "",
                   updatedAt: Date())
         } : []
-        dump.append("【PC·\(pcSource)】" + pcHeader
-                    + (orders.isEmpty ? "\n【未采用】解析结果不可信" : "\n【备用】\(orders.count) 条"))
-        diag.append("PC:HTTP\(status)/\(html.count)字/\(pcRows.count)条" + (orders.isEmpty ? "(未采用)" : "(备用)"))
-        return orders
+        var out = PcResult()
+        out.orders = orders
+        out.dump = "【PC·\(pcSource)】" + pcHeader
+            + (orders.isEmpty ? "\n【未采用】解析结果不可信" : "\n【备用】\(orders.count) 条")
+        out.diag = "PC:HTTP\(status)/\(html.count)字/\(pcRows.count)条" + (orders.isEmpty ? "(未采用)" : "(备用)")
+        return out
     }
 
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
