@@ -151,6 +151,9 @@ enum OrderClient {
                 cookieHeader: cookieHeader,
                 seconds: seconds,
                 clickTabs: false,
+                // 电脑版详情页的物流轨迹在「物流信息」里、取件码可能要「展开详细信息」才出来；
+                // 找不到这些文字就什么都不点（capture 会自己跳过）。
+                clickTexts: pcMode ? ["物流信息", "查看物流", "展开详细信息"] : [],
                 scroll: true,
                 // 以前只认「运输中/已签收/运单号」这些快递词，自提单页面上写的是
                 // 「待取件 / 取件码 15-6-2127 / 投递完成，请上门提货」——一个都不匹配，
@@ -281,6 +284,8 @@ enum OrderClient {
         var renderNote = ""
         // 桌面渲染会连商品图一起取回来（JS 返回 {"t": 正文, "i": 图片URL}）
         var pcImgs: [String] = []
+        // 订单号 → 商品图（渲染 JS 从订单卡片里爬出来的），按下标对图会错位
+        var pcPics: [String: String] = [:]
         if pcRows.isEmpty {
             // 直取没解析到：可能是 JS 渲染版或者被踢回登录页，让桌面槽渲染一遍再试
             let rendered = await WebOrderFetcher.shared.jdPCListRender(cookieHeader: cookie)
@@ -290,6 +295,7 @@ enum OrderClient {
                    let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     pcText = (obj["t"] as? String) ?? ""
                     pcImgs = (obj["i"] as? [String]) ?? []
+                    pcPics = (obj["p"] as? [String: String]) ?? [:]
                     if let links = obj["l"] as? [String: String], !links.isEmpty {
                         JdPCLinks.save(links)
                     }
@@ -335,7 +341,7 @@ enum OrderClient {
                   orderTime: row.dateText,
                   logistics: "",
                   pickupCode: "",
-                  imageURL: index < pcImgs.count ? pcImgs[index] : "",
+                  imageURL: pcPics[row.orderNo] ?? (index < pcImgs.count ? pcImgs[index] : ""),
                   updatedAt: Date())
         } : []
         var out = PcResult()

@@ -1207,7 +1207,7 @@ final class WebOrderFetcher: NSObject {
             var nodes = (e || document).querySelectorAll('img');
             for (var i = 0; i < nodes.length; i++) {
               var s = nodes[i].src || '';
-              if (s.indexOf('360buyimg.com') >= 0 && s.indexOf('icon') < 0 && s.indexOf('logo') < 0) {
+              if (s.indexOf('360buyimg.com') >= 0 && s.indexOf('icon') < 0 && s.indexOf('logo') < 0 && s.indexOf('sprite') < 0 && (nodes[i].naturalWidth === 0 || nodes[i].naturalWidth >= 60)) {
                 imgs.push(s);
               }
               if (imgs.length > 60) break;
@@ -1225,7 +1225,29 @@ final class WebOrderFetcher: NSObject {
               if (j > 400) break;
             }
           } catch (err2) {}
-          return JSON.stringify({ t: text, i: imgs, l: links });
+          // 图片必须跟订单号绑在一起：平铺一个图片数组再按下标对，对出来的是页头小图标
+          // （用户看到「订单图标不对」就是这么来的）。这里从每个订单详情链接往上爬，
+          // 找到它所在卡片里的商品图。
+          var pics = {};
+          try {
+            var as2 = (e || document).querySelectorAll('a[href]');
+            for (var k = 0; k < as2.length; k++) {
+              var m2 = (as2[k].href || '').match(/(?:orderId|orderid|deal_id)=(\\d{6,25})/);
+              if (!m2) continue;
+              var node = as2[k];
+              for (var up = 0; up < 7 && node; up++) {
+                node = node.parentElement;
+                if (!node) break;
+                var im = node.querySelector('img[src*="360buyimg"]');
+                if (!im || !im.src) continue;
+                if (im.src.indexOf('icon') >= 0 || im.src.indexOf('logo') >= 0 || im.src.indexOf('sprite') >= 0) continue;
+                if (im.naturalWidth > 0 && im.naturalWidth < 60) continue;
+                pics[m2[1]] = im.src;
+                break;
+              }
+            }
+          } catch (err3) {}
+          return JSON.stringify({ t: text, i: imgs, l: links, p: pics });
         })()
         """
         let payload = (try? await wv.evaluateJavaScript(js)) as? String ?? ""

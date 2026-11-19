@@ -317,9 +317,8 @@ struct PlatformRow: View {
             }
 
             HStack(spacing: 10) {
-                Button(platform == .jd
-                       ? (app.hasPcLogin(platform) ? "电脑版重登" : "电脑版登录")
-                       : (loggedIn ? "重新登录" : "登录")) {
+                // 京东虽然走电脑版登录页，按钮文字跟其它平台保持一致，不在这里造新词。
+                Button(loggedIn ? "重新登录" : "登录") {
                     if platform == .jd {
                         app.pcLoginPlatform = .jd
                     } else {
