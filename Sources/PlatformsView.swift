@@ -341,6 +341,10 @@ struct PlatformRow: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(.red)
+
+                    Button("电脑版登录") { app.pcLoginPlatform = .jd }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                 }
 
                 Spacer()
@@ -350,6 +354,23 @@ struct PlatformRow: View {
                 Text("登录于 \(time.formatted(date: .numeric, time: .shortened))，凭证 \(app.cookieSize(platform)) 字节")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+            }
+
+            if platform == .jd {
+                if app.hasPcLogin(platform), let pcTime = app.pcLoginTime(platform) {
+                    Text("电脑版凭证 存于 \(pcTime.formatted(date: .numeric, time: .shortened))（\(app.pcCookieSize(platform)) 字节）")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                } else if app.pcCookieSize(platform) > 0 {
+                    Text("电脑版凭证不完整（缺 thor/pin），点「电脑版登录」重登一次")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+                if app.jdBlocked {
+                    Text("⚠️ 上次刷新被京东风控挡了 —— 绿点只代表有 cookie，不代表会话有效")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                }
             }
         }
         .padding(.vertical, 4)

@@ -520,7 +520,8 @@ final class WebOrderFetcher: NSObject {
 
     /// 页面自取的结果：要么给一条抓包记录，要么说清楚为什么没拿到
     struct JdPagePick {
-        var entry: String = ""      // 命中 orderList 的那条抓包记录（JSON）
+        var entry: String = ""      // 命中 orderList 的**最后**一条抓包记录（JSON）
+        var entries: [String] = []  // 这次抓到的**所有**订单接口响应（分页/tab 各一次，最多 6 条）
         var reason: String = ""     // 失败原因
         var responses: Int = 0      // 这次页面一共抓到多少条接口响应
         var textHead: String = ""   // 页面正文开头
@@ -534,7 +535,8 @@ final class WebOrderFetcher: NSObject {
     /// 为什么需要它：存档里的 URL 放久了会变成空壳，而页面自己发的请求永远是新鲜的，
     /// 比等整页渲染（9–10 秒）便宜得多。
     func jdOrderListFromPage(cookieHeader: String, urlString: String,
-                             clickText: String = "全部订单", wait: Double = 6) async -> JdPagePick {
+                             clickText: String = "全部订单", wait: Double = 6,
+                             deep: Bool = true) async -> JdPagePick {
         var pick = JdPagePick()
         pick.url = urlString
         guard let target = URL(string: urlString) else {
@@ -557,22 +559,26 @@ final class WebOrderFetcher: NSObject {
         let take = #"""
         (function(){
           var a = window.__dshCap || [];
-          var best = -1;
-          for (var i = 0; i < a.length; i++) { if (String(a[i].b || '').indexOf('orderList') >= 0) best = i; }
-          if (best < 0) return '';
-          var e = a[best] || {};
-          return JSON.stringify({ u: String(e.u || ''), r: e.r || null, b: String(e.b || '') });
+          var out = [];
+          for (var i = 0; i < a.length; i++) {
+            var b = String(a[i].b || '');
+            if (b.indexOf('orderList') < 0) continue;
+            var e = a[i] || {};
+            out.push(JSON.stringify({ u: String(e.u || ''), r: e.r || null, b: b }));
+          }
+          if (out.length > 6) { out = out.slice(out.length - 6); }
+          return JSON.stringify(out);
         })()
         """#
+        var hitAt: Date? = nil
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: 250_000_000)
-            if ((try? await wv.evaluateJavaScript(probe)) as? String) == "1" {
-                let entry = (try? await wv.evaluateJavaScript(take)) as? String ?? ""
-                if !entry.isEmpty {
-                    pick.entry = entry
-                    return pick
-                }
+            if hitAt == nil, ((try? await wv.evaluateJavaScript(probe)) as? String) == "1" {
+                hitAt = Date()
             }
+            // 京东手机版一页 10 条，翻页/切 tab 会再发一条订单接口。
+            // 所以命中后再多等 0.9 秒，把所有命中的响应一起收走，而不是只拿最后一条。
+            if let h = hitAt, Date().timeIntervalSince(h) >= 0.9 { break }
             let n = Int((try? await wv.evaluateJavaScript(countJS)) as? String ?? "0") ?? 0
             pick.responses = n
             // 首屏没自己拉订单，就点一次「全部订单」，再继续等
@@ -582,6 +588,22 @@ final class WebOrderFetcher: NSObject {
             }
             // 页面已经正常跑起来（接口一堆）却始终没有订单接口：多半是京东侧降级，别死等
             if Date().timeIntervalSince(started) > 4, n >= 8 { break }
+        }
+        if hitAt != nil {
+            var entries = await jdCapturedEntries(wv, js: take)
+            // 只有一条响应时，滚到底触发「加载更多」把第 2 页也收走 —— 只抓第一条正是
+            // 「到货没取的订单刷不出来」的原因（一页 10 条，第 11 单就丢了）。
+            if deep, entries.count <= 1 {
+                _ = try? await wv.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight);")
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                let more = await jdCapturedEntries(wv, js: take)
+                if more.count > entries.count { entries = more }
+            }
+            if !entries.isEmpty {
+                pick.entries = entries
+                pick.entry = entries.last ?? ""
+                return pick
+            }
         }
         // 把这次页面到底请求了什么全部记下来，供落盘排查
         let summaryJS = #"""
@@ -612,6 +634,14 @@ final class WebOrderFetcher: NSObject {
         }
         pick.reason = "页面没抓到订单接口（接口响应 \(pick.responses) 条）"
         return pick
+    }
+
+    /// 从页面里把当前所有「含 orderList 的响应」取成字符串数组（新→旧按抓包顺序）。
+    private func jdCapturedEntries(_ wv: WKWebView, js: String) async -> [String] {
+        let raw = (try? await wv.evaluateJavaScript(js)) as? String ?? ""
+        guard let d = raw.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: d) as? [String] else { return [] }
+        return arr
     }
 
     /// 在指定槽的页面里把一条请求原样重发（方法 / 头 / 请求体都由调用方给），
@@ -1052,21 +1082,59 @@ final class WebOrderFetcher: NSObject {
         return false
     }
 
-    private func makeWebView(slot: String = "main") -> WKWebView {
+    private func makeWebView(slot: String = "main", desktop: Bool = false) -> WKWebView {
         let cfg = WKWebViewConfiguration()
         cfg.websiteDataStore = .default()
         cfg.allowsInlineMediaPlayback = true
         cfg.userContentController.addUserScript(
             WKUserScript(source: hookScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         )
-        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 820), configuration: cfg)
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: desktop ? 1180 : 390,
+                                         height: desktop ? 900 : 820), configuration: cfg)
         // 隐藏抓包槽也必须用登录时那套 UA，否则「登录」和「抓单」在京东眼里是两台设备
-        UserAgent.apply(to: wv)
+        UserAgent.apply(to: wv, desktop: desktop)
         wv.alpha = 0.02
         wv.isUserInteractionEnabled = false
         attach(wv)
         slots[slot] = wv
         return wv
+    }
+
+    /// 电脑版订单页（`order.jd.com/center/list.action`）渲染一遍，把正文交回来。
+    /// 这条路用的是桌面会话（thor/pin），和手机版 pt_key 无关 —— 手机版被风控时它可能还活着。
+    /// 返回 "200|正文" 或 "ERR 原因"。
+    func jdPCListRender(cookieHeader: String,
+                        urlString: String = "https://order.jd.com/center/list.action?d=1",
+                        wait: Double = 7) async -> String {
+        guard let target = URL(string: urlString) else { return "ERR URL 拼错" }
+        let wv: WKWebView
+        if let exist = slots["jd-pc"], exist.url?.host?.contains("order.jd.com") == true {
+            wv = exist
+        } else {
+            wv = makeWebView(slot: "jd-pc", desktop: true)
+        }
+        await prefillCookies(cookieHeader, platform: .jd, force: true)
+        var request = URLRequest(url: target)
+        request.timeoutInterval = wait
+        request.setValue(UserAgent.macOS, forHTTPHeaderField: "User-Agent")
+        request.setValue("https://www.jd.com/", forHTTPHeaderField: "Referer")
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                         forHTTPHeaderField: "Accept")
+        _ = await wv.load(request)
+
+        let deadline = Date().addingTimeInterval(wait)
+        var state = ""
+        while Date() < deadline {
+            state = (try? await wv.evaluateJavaScript("String(document.readyState)")) as? String ?? ""
+            if state == "complete" { break }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        // 列表是 JS 渲染的，complete 之后还要给一点时间出 DOM
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        let js = "(function(){var e=document.querySelector('#orderList, .order-list, #order-list')||document.body;return e?e.innerText:''})()"
+        let text = (try? await wv.evaluateJavaScript(js)) as? String ?? ""
+        if text.isEmpty { return "ERR 空文档（state=\(state)）" }
+        return "200|" + text
     }
 
     private func shortURL(_ url: URL) -> String {

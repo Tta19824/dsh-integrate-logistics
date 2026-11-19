@@ -47,6 +47,23 @@ enum Platform: String, CaseIterable, Identifiable, Codable {
         case .jd: return ["pt_key", "pt_pin"]
         }
     }
+
+    /// 电脑版（桌面 UA）登录页。京东的 PC 会话是另一套凭证（`thor`+`pin`），
+    /// 和手机版的 `pt_key` 完全独立 —— 手机版被风控时，PC 会话常常还活着。
+    var desktopLoginURL: URL? {
+        switch self {
+        case .jd: return URL(string: "https://passport.jd.com/new/login.aspx")!
+        default: return nil
+        }
+    }
+
+    /// 电脑版会话的关键 cookie
+    var pcEssentialCookies: [String] {
+        switch self {
+        case .jd: return ["thor", "pin"]
+        default: return []
+        }
+    }
 }
 
 enum OrderStatus: String, Codable {

@@ -7,8 +7,47 @@ enum CookieStore {
     private static let service = "com.abdd.orderpocket.cookies"
 
     static func save(_ value: String, for platform: Platform) {
+        save(value, account: platform.rawValue)
+    }
+
+    static func load(for platform: Platform) -> String? {
+        load(account: platform.rawValue)
+    }
+
+    static func delete(for platform: Platform) {
+        delete(account: platform.rawValue)
+    }
+
+    static func savedAt(for platform: Platform) -> Date? {
+        savedAt(account: platform.rawValue)
+    }
+
+    // MARK: - 电脑版会话（京东 thor/pin，独立于手机版 pt_key）
+
+    private static func pcAccount(_ platform: Platform) -> String {
+        platform.rawValue + "-pc"
+    }
+
+    static func savePc(_ value: String, for platform: Platform) {
+        save(value, account: pcAccount(platform))
+    }
+
+    static func loadPc(for platform: Platform) -> String? {
+        load(account: pcAccount(platform))
+    }
+
+    static func deletePc(for platform: Platform) {
+        delete(account: pcAccount(platform))
+    }
+
+    static func savedAtPc(for platform: Platform) -> Date? {
+        savedAt(account: pcAccount(platform))
+    }
+
+    // MARK: - 底层读写
+
+    private static func save(_ value: String, account: String) {
         let data = Data(value.utf8)
-        let account = platform.rawValue
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -28,11 +67,11 @@ enum CookieStore {
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "cookie_saved_at_\(account)")
     }
 
-    static func load(for platform: Platform) -> String? {
+    private static func load(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: platform.rawValue,
+            kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -42,18 +81,18 @@ enum CookieStore {
         return String(data: data, encoding: .utf8)
     }
 
-    static func delete(for platform: Platform) {
+    private static func delete(account: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: platform.rawValue
+            kSecAttrAccount as String: account
         ]
         SecItemDelete(query as CFDictionary)
-        UserDefaults.standard.removeObject(forKey: "cookie_saved_at_\(platform.rawValue)")
+        UserDefaults.standard.removeObject(forKey: "cookie_saved_at_\(account)")
     }
 
-    static func savedAt(for platform: Platform) -> Date? {
-        let ts = UserDefaults.standard.double(forKey: "cookie_saved_at_\(platform.rawValue)")
+    private static func savedAt(account: String) -> Date? {
+        let ts = UserDefaults.standard.double(forKey: "cookie_saved_at_\(account)")
         guard ts > 0 else { return nil }
         return Date(timeIntervalSince1970: ts)
     }

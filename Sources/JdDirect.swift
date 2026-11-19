@@ -103,8 +103,45 @@ enum JdDirect {
         }
     }
 
-    static func requestDetail(_ req: Req) -> String {
-        var dict: [String: Any] = ["url": req.url, "method": req.method, "headers": req.headers]
+    // MARK: - 翻页（订单列表一页 10 条，第 11 单起必须自己去要）
+
+    /// 抓包记录是 `{"u":…,"r":…,"b":…}`，这里把请求 URL 取出来。
+    static func url(ofEntry entry: String) -> String? {
+        guard let d = entry.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let u = obj["u"] as? String, !u.isEmpty else { return nil }
+        return u
+    }
+
+    /// 把 `api.m.jd.com` 请求里 `body` 参数中的 `page` 改成指定页。
+    /// 京东的 `order_list_m` 分页就在 body 的 JSON 里（`page`/`pageNo`），改了再 GET 一次即可。
+    static func urlReplacingPage(_ url: String, page: Int) -> String? {
+        guard let r = url.range(of: "&body=") ?? url.range(of: "?body=") else { return nil }
+        let head = String(url[..<r.upperBound])
+        let rest = String(url[r.upperBound...])
+        let amp = rest.firstIndex(of: "&")
+        let rawValue = amp.map { String(rest[..<$0]) } ?? rest
+        let tail = amp.map { String(rest[$0...]) } ?? ""
+        guard let decoded = rawValue.removingPercentEncoding,
+              let data = decoded.data(using: .utf8),
+              var dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        dict["page"] = page
+        dict["pageNo"] = page
+        guard let newData = try? JSONSerialization.data(withJSONObject: dict),
+              let newBody = String(data: newData, encoding: .utf8),
+              let encoded = newBody.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return nil }
+        return head + encoded + tail
+    }
+
+    /// 把接口返回的响应体包成一条「抓包记录」，好让 `parseJdOrderList` 直接吃。
+    static func entryWrapping(body: String) -> String {
+        let dict: [String: Any] = ["b": body]
+        guard let d = try? JSONSerialization.data(withJSONObject: [dict]),
+              let s = String(data: d, encoding: .utf8) else { return "[]" }
+        return s
+    }
+
+    static func requestDetail(_ req: Req) -> String {        var dict: [String: Any] = ["url": req.url, "method": req.method, "headers": req.headers]
         if let body = req.body { dict["body"] = body }
         let data = (try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])) ?? Data()
         return String(data: data, encoding: .utf8) ?? "{}"

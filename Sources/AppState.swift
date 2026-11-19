@@ -16,6 +16,10 @@ final class AppState: ObservableObject {
     @Published var enrichInfo: String = ""
     /// 京东在后台慢慢抓（它要 9 秒，不想让「刷新」等它）
     @Published var jdBusy: Bool = false
+    /// 电脑版登录（京东 thor/pin），和 loginPlatform 分开走
+    @Published var pcLoginPlatform: Platform?
+    /// 京东上次刷新是否被风控挡了 —— 有它就说明那个绿点不可信
+    @Published var jdBlocked: Bool = false
 
     init() {
         reload()
@@ -87,6 +91,44 @@ final class AppState: ObservableObject {
         objectWillChange.send()
     }
 
+    // MARK: - 电脑版会话（京东专用）
+
+    func hasPcLogin(_ platform: Platform) -> Bool {
+        guard let pc = CookieStore.loadPc(for: platform) else { return false }
+        return platform.pcEssentialCookies.allSatisfy { pc.contains("\($0)=") }
+    }
+
+    func pcLoginTime(_ platform: Platform) -> Date? { CookieStore.savedAtPc(for: platform) }
+
+    func pcCookieSize(_ platform: Platform) -> Int { CookieStore.loadPc(for: platform)?.count ?? 0 }
+
+    /// 电脑版登录完成：只存 thor/pin 那套，不覆盖手机版凭证。
+    func finishPcLogin(_ platform: Platform) {
+        CookieStore.extractFromWebView(for: platform) { header in
+            Task { @MainActor in
+                guard let header, !header.isEmpty else {
+                    self.show("\(platform.name)：电脑版登录没有读到 cookie")
+                    return
+                }
+                CookieStore.savePc(header, for: platform)
+                let hasThor = header.contains("thor=")
+                let hasPin = header.contains("pin=")
+                var extra = "thor " + (hasThor ? "有" : "无") + "·pin " + (hasPin ? "有" : "无")
+                if !hasThor {
+                    extra += "（没登成或者登的是手机版，下次刷新会走手机版那条路）"
+                }
+                self.show("\(platform.name)：电脑版凭证已存 \(header.count) 字节（\(extra)）")
+                self.reload()
+            }
+        }
+    }
+
+    func clearPcLogin(_ platform: Platform) {
+        CookieStore.deletePc(for: platform)
+        show("\(platform.name)：已清掉电脑版凭证")
+        reload()
+    }
+
     /// 清空某平台的登录态：钥匙串 + WebView 里的 cookie + 京东重放存档。
     /// 京东会话被服务端作废后，只重登不清 WebView 是没用的（旧 cookie 会一直盖着新的）。
     func clearLogin(_ platform: Platform) {
@@ -111,6 +153,10 @@ final class AppState: ObservableObject {
                 }
                 reload()
                 busy = nil
+                // 京东这条 note 里带「降级」就是被风控挡了：界面上的绿点不该继续说「已登录」
+                if platform == .jd {
+                    jdBlocked = outcome.note.contains("降级") || outcome.note.contains("被风控")
+                }
                 show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)")
             } catch {
                 busy = nil

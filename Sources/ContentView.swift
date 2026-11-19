@@ -35,6 +35,10 @@ struct ContentView: View {
             LoginSheet(platform: platform)
                 .environmentObject(app)
         }
+        .sheet(item: $app.pcLoginPlatform) { platform in
+            LoginSheet(platform: platform, isDesktopLogin: true)
+                .environmentObject(app)
+        }
         .overlay(alignment: .top) {
             if let message = app.toast {
                 Text(message)
@@ -57,6 +61,8 @@ struct ContentView: View {
 
 struct LoginSheet: View {
     let platform: Platform
+    /// 电脑版登录：桌面 UA + passport 登录页，存下来的是 thor/pin 那套会话
+    var isDesktopLogin: Bool = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var loginScenePhase
     @EnvironmentObject private var app: AppState
@@ -68,11 +74,21 @@ struct LoginSheet: View {
     @State private var liveBaseline: [String: String] = [:]
     @State private var pendingAt: Date?
 
+    private var loginStartURL: URL {
+        if isDesktopLogin, let url = platform.desktopLoginURL { return url }
+        return platform.loginURL
+    }
+
+    /// 判定“登录成功”要看哪几个 cookie：电脑版看 thor/pin，手机版看 pt_key/pt_pin
+    private var loginCookieNames: [String] {
+        isDesktopLogin ? platform.pcEssentialCookies : platform.essentialCookies
+    }
+
     var body: some View {
         NavigationStack {
             WebView(
-                url: platform.loginURL,
-                desktop: platform == .pdd,
+                url: loginStartURL,
+                desktop: platform == .pdd || isDesktopLogin,
                 clearDomains: platform.cookieDomainHints,
                 autoQR: platform == .pdd,
                 onReady: { handle.view = $0 }
@@ -100,7 +116,7 @@ struct LoginSheet: View {
                     Text(debugText).font(.system(size: 10)).foregroundColor(.secondary).padding(4)
                 }
                 .ignoresSafeArea(edges: .bottom)
-                .navigationTitle("\(platform.name) 登录")
+                .navigationTitle(isDesktopLogin ? "\(platform.name) 电脑版登录" : "\(platform.name) 登录")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -108,7 +124,11 @@ struct LoginSheet: View {
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("完成") {
-                            app.finishLogin(platform)
+                            if isDesktopLogin {
+                                app.finishPcLogin(platform)
+                            } else {
+                                app.finishLogin(platform)
+                            }
                             dismiss()
                         }
                         .bold()
@@ -139,7 +159,7 @@ struct LoginSheet: View {
             // 第一次采样：只记录，不判定（京东的访客会话也会下发 pt_key）
             if liveBaseline.isEmpty {
                 var snap: [String: String] = [:]
-                for name in platform.essentialCookies {
+                for name in loginCookieNames {
                     snap[name] = current[name] ?? ""
                 }
                 DispatchQueue.main.async {
@@ -151,7 +171,7 @@ struct LoginSheet: View {
 
             var parts: [String] = []
             var changed = true
-            for name in platform.essentialCookies {
+            for name in loginCookieNames {
                 let v = current[name] ?? ""
                 let snap = liveBaseline[name] ?? ""
                 parts.append("\(name)=\(v.prefix(6))")
@@ -171,8 +191,13 @@ struct LoginSheet: View {
                 if let since = pendingAt {
                     if Date().timeIntervalSince(since) >= 3 {
                         autoClosed = true
-                        app.finishLogin(platform)
-                        app.toast = "\(platform.name)登录成功，凭证已自动保存"
+                        if isDesktopLogin {
+                            app.finishPcLogin(platform)
+                            app.toast = "\(platform.name)电脑版登录成功，凭证已自动保存"
+                        } else {
+                            app.finishLogin(platform)
+                            app.toast = "\(platform.name)登录成功，凭证已自动保存"
+                        }
                         dismiss()
                     }
                 } else {
