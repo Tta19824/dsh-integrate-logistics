@@ -1220,7 +1220,7 @@ final class WebOrderFetcher: NSObject {
             var as = (e || document).querySelectorAll('a[href]');
             for (var j = 0; j < as.length; j++) {
               var h = as[j].href || '';
-              var m = h.match(/(?:orderId|orderid|deal_id)=(\d{6,25})/);
+              var m = h.match(/(?:orderId|orderid|deal_id)=(\\d{6,25})/);
               if (m) links[m[1]] = h;
               if (j > 400) break;
             }
