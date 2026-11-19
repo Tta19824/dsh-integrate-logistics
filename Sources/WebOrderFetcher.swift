@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 import UIKit
 import WebKit
 
@@ -531,6 +531,7 @@ final class WebOrderFetcher: NSObject {
         var textHead: String = ""   // 页面正文开头
         var captured: String = ""   // 所有接口响应的概要（落盘用）
         var url: String = ""
+        var reused: Bool = false    // 这次没重新加载页面，直接复用了热页面上已有的响应
     }
 
     /// 让京东页面自己去请求订单列表（不点 tab、不等渲染、不滚动），
@@ -575,6 +576,7 @@ final class WebOrderFetcher: NSObject {
                 pick.entries = warm
                 pick.entry = warm.last ?? ""
                 pick.responses = warm.count
+                pick.reused = true
                 return pick
             }
         }

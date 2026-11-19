@@ -361,9 +361,11 @@ enum OrderClient {
             "https://trade.m.jd.com/order/orderlist_jdm.shtml"
         ]
         for (index, pageURL) in pageURLs.enumerated() {
-            let tag = index == 0 ? "自取my" : "自取trade"
             let pick = await WebOrderFetcher.shared.jdOrderListFromPage(cookieHeader: cookie, urlString: pageURL)
             picks.append(pick)
+            // 「热」= 这次没重新加载页面，用的是刚打开过的那份响应。note 里标出来，
+            // 用户看到「0.1 秒」时才知道是复用，不是抓了个旧数据。
+            let tag = (index == 0 ? "自取my" : "自取trade") + (pick.reused ? "·热" : "")
             if !pick.entry.isEmpty {
                 // 页面可能发了不止一条订单接口（翻页 / 切 tab），全部交回去让解析器按订单号去重
                 let used = pick.entries.isEmpty ? [pick.entry] : pick.entries
@@ -451,10 +453,22 @@ enum OrderClient {
         }
 
         let maxResponses = picks.map { $0.responses }.max() ?? 0
-        // 快路三：电脑版兜底。手机版这条路没出结果时才跑 —— 桌面渲染要 1.5～2 秒，
-        // 手机版正常时不该为它买单（0.36.11 实测：先跑电脑版，5.5 秒里有 2 秒是白花的）。
+        // 手机版没抓到接口时，先看「页面自己说了什么」，这比「无结果」三个字有用得多。
+        let failHint: String = {
+            let heads = picks.map { $0.textHead }.joined(separator: " ")
+            if heads.contains("账号信息获取失败") { return "京东不认这份登录态" }
+            if heads.contains("快速验证") || heads.contains("验证一下") { return "被要求验证" }
+            if heads.contains("大促异常火爆") { return "京东侧降级" }
+            if heads.contains("请登录") || heads.contains("免费注册") { return "页面显示未登录" }
+            if maxResponses >= 6 { return "页面接口 \(maxResponses) 条但没有订单接口" }
+            return "页面没跑起来（接口 \(maxResponses) 条）"
+        }()
+        // 库里已经有京东订单时，这一趟的目标就变成「别把好数据弄坏」：
+        // 0.36.12 实测过一次惨案 —— 手机版失败、电脑版只给 1 条且没有图，
+        // 结果 10 条带图的列表被它顶掉了。所以电脑版只在库是空的时候才顶上来。
+        let existing = OrderStore.shared.all().filter { $0.platform == .jd }
         var pcOrders: [Order] = []
-        if let pcCookie = CookieStore.loadPc(for: .jd), pcCookie.contains("thor=") {
+        if let pcCookie = CookieStore.loadPc(for: .jd), pcCookie.contains("thor="), existing.isEmpty {
             let t = Date()
             let pc = await jdPCRows(cookie: pcCookie)
             pcOrders = pc.orders
@@ -462,17 +476,32 @@ enum OrderClient {
             diag.append(pc.diag)
             diag.append("PC:\(String(format: "%.1f", Date().timeIntervalSince(t)))s")
         }
-        // 手机版没出订单、但电脑版（thor/pin）看得见 —— 用电脑版的，别让用户空手。
+        let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+        if !existing.isEmpty {
+            // 库里有列表：不要再烧 14 秒慢路，也不要拿 1 条无图订单顶掉它。
+            // 返回空 + authoritative: false，AppState.refresh 就不会 replace。
+            dump.append("【保留上次】京东手机版这次没抓到（\(failHint)），库里 \(existing.count) 条原样保留")
+            _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
+            return FetchOutcome(
+                orders: [],
+                httpStatus: 200,
+                byteCount: 0,
+                rawFileURL: jdInPageFile(),
+                note: "京东手机版没抓到（\(failHint)）· 保留上次 \(existing.count) 条 · 用时 \(cost) 秒",
+                payloadJSON: "",
+                authoritative: false
+            )
+        }
+        // 库是空的、电脑版（thor/pin）看得见 —— 用电脑版的，别让用户空手。
         if !pcOrders.isEmpty {
-            let cost = String(format: "%.1f", Date().timeIntervalSince(started))
-            dump.append("【采用电脑版】手机版无结果，电脑版 \(pcOrders.count) 条")
+            dump.append("【采用电脑版】库里没有京东订单，先用电脑版的 \(pcOrders.count) 条")
             _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
             return FetchOutcome(
                 orders: pcOrders,
                 httpStatus: 200,
                 byteCount: pcOrders.count,
                 rawFileURL: jdPCListFile(),
-                note: "京东电脑版 \(pcOrders.count) 条（手机版无结果）· 用时 \(cost) 秒",
+                note: "京东电脑版 \(pcOrders.count) 条（手机版：\(failHint)）· 用时 \(cost) 秒",
                 payloadJSON: "",
                 authoritative: true
             )

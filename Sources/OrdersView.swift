@@ -516,7 +516,10 @@ struct LogisticsSheet: View {
     private func loadJD() async {
         let cacheKey = "jd:\(order.orderNo)"
         if !order.pickupCode.isEmpty { pickup = order.pickupCode }
-        if let cached = TraceCache.shared.get(cacheKey) {
+        // 缓存只在「真攒到轨迹」时才算数：以前连「等待京东发货」这种占位也缓存，
+        // 结果点进来永远是那句占位，看起来就是「物流详情数据不对」。
+        if let cached = TraceCache.shared.get(cacheKey),
+           cached.events.count > 1 || !cached.tracking.isEmpty {
             events = cached.events
             tracking = cached.tracking
             carrierLine = cached.carrier.isEmpty ? order.carrier : cached.carrier
@@ -535,6 +538,16 @@ struct LogisticsSheet: View {
             return
         }
         try? cap.text.data(using: .utf8)?.write(to: OrderClient.jdDetailFile(for: .jd), options: .atomic)
+        // 京东把没登录的 WebView 渲染成「你好，请登录 / 账号信息获取失败」，那不是订单详情，
+        // 更不是物流轨迹 —— 直接说清楚，别拿它拼出几条假进度。
+        let blocked = cap.text.contains("账号信息获取失败")
+            || cap.text.contains("快速验证")
+            || cap.text.contains("免费注册")
+        if blocked {
+            message = "京东这个页面没认登录态（显示「请登录 / 账号信息获取失败」）。先去「平台」页把京东登录一下再回来"
+            loading = false
+            return
+        }
         let parsed = TaobaoJdParser.parseJdLogistics(text: cap.text, payloadJSON: cap.payloadJSON)
         events = parsed.events
         tracking = parsed.tracking
@@ -555,6 +568,10 @@ struct LogisticsSheet: View {
             let latest = order.logistics.isEmpty ? "等待京东发货，发货后会自动更新" : order.logistics
             events = [ShipEvent(id: 0, time: "", desc: latest)]
             message = "这单还没发货，先显示最新进度"
+            // 占位不进缓存：进了缓存下次点进来就永远看不到真实轨迹了
+            loading = false
+            await refreshRoute()
+            return
         }
         TraceCache.shared.put(cacheKey, TraceCache.Item(at: Date(), events: events, tracking: tracking, carrier: carrierLine))
         if let latest = events.first, !latest.desc.isEmpty {

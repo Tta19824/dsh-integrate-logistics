@@ -217,13 +217,17 @@ final class AppState: ObservableObject {
         jdPickupBusy = true
         Task { [weak self] in
             defer { Task { @MainActor in self?.jdPickupBusy = false } }
+            var got: [String] = []
+            var blocked = 0
             for no in targets {
                 // 后台用单独的槽，别把用户正在看的详情页顶掉
                 guard let cap = try? await OrderClient.captureJdDetail(
                     orderNo: no, cookieHeader: cookie, slot: "detail-jd-bg", seconds: 7) else { continue }
+                if cap.text.contains("账号信息获取失败") || cap.text.contains("免费注册") { blocked += 1 }
                 let code = DetailParser.pickupCode(from: cap.text)
                 if !code.isEmpty {
                     OrderStore.shared.setPickup(orderNo: no, code: code)
+                    got.append(code)
                 }
                 let parsed = TaobaoJdParser.parseJdLogistics(text: cap.text, payloadJSON: cap.payloadJSON)
                 if let latest = parsed.events.first, !latest.desc.isEmpty {
@@ -233,6 +237,15 @@ final class AppState: ObservableObject {
                 }
                 guard let self else { return }
                 await MainActor.run { self.reload() }
+            }
+            // 取件码是异步补的，用户不会盯着看 —— 结果必须说出来，否则「没出现」永远没法归因
+            guard let self else { return }
+            if !got.isEmpty {
+                self.show("京东取件码：\(got.joined(separator: "、"))")
+            } else if blocked > 0 {
+                self.show("京东取件码没读到：详情页显示「请登录 / 账号信息获取失败」，先去「平台」页重登京东")
+            } else {
+                self.show("京东取件码没读到：详情页里没有「取件码」字样")
             }
         }
     }
