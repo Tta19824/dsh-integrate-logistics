@@ -476,7 +476,7 @@ enum OrderClient {
             diag.append(pc.diag)
             diag.append("PC:\(String(format: "%.1f", Date().timeIntervalSince(t)))s")
         }
-        let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+        let costSoFar = String(format: "%.1f", Date().timeIntervalSince(started))
         if !existing.isEmpty {
             // 库里有列表：不要再烧 14 秒慢路，也不要拿 1 条无图订单顶掉它。
             // 返回空 + authoritative: false，AppState.refresh 就不会 replace。
@@ -487,7 +487,7 @@ enum OrderClient {
                 httpStatus: 200,
                 byteCount: 0,
                 rawFileURL: jdInPageFile(),
-                note: "京东手机版没抓到（\(failHint)）· 保留上次 \(existing.count) 条 · 用时 \(cost) 秒",
+                note: "京东手机版没抓到（\(failHint)）· 保留上次 \(existing.count) 条 · 用时 \(costSoFar) 秒",
                 payloadJSON: "",
                 authoritative: false
             )
@@ -501,7 +501,7 @@ enum OrderClient {
                 httpStatus: 200,
                 byteCount: pcOrders.count,
                 rawFileURL: jdPCListFile(),
-                note: "京东电脑版 \(pcOrders.count) 条（手机版：\(failHint)）· 用时 \(cost) 秒",
+                note: "京东电脑版 \(pcOrders.count) 条（手机版：\(failHint)）· 用时 \(costSoFar) 秒",
                 payloadJSON: "",
                 authoritative: true
             )
