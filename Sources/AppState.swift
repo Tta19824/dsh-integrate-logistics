@@ -14,8 +14,6 @@ final class AppState: ObservableObject {
     @Published var disabledPlatforms: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "disabled_platforms") ?? [])
     /// 最近一次后台补抓做了什么
     @Published var enrichInfo: String = ""
-    /// 京东在后台慢慢抓（它要 9 秒，不想让「刷新」等它）
-    @Published var jdBusy: Bool = false
     /// 电脑版登录（京东 thor/pin），和 loginPlatform 分开走
     @Published var pcLoginPlatform: Platform?
     /// 京东上次刷新是否被风控挡了 —— 有它就说明那个绿点不可信
@@ -212,21 +210,17 @@ final class AppState: ObservableObject {
     }
 
     func refreshAll(quiet: Bool = false) {
-        // 京东先断开：抓取路径还没跑通，留着会让每次刷新多花几十秒
         let all = Platform.allCases.filter { isLoggedIn($0) && !disabledPlatforms.contains($0.rawValue) }
-        // 京东单独放后台：它一次要 9 秒左右，等它会让「刷新」整体变慢
-        let platforms = all.filter { $0 != .jd }
-        let slowPlatforms = all.filter { $0 == .jd }
         guard !all.isEmpty else {
             show("还没有登录任何平台，先去「平台」页登录")
             return
         }
         guard busy == nil else { return }
         Task {
-            busy = platforms.first
-            // 两个平台各自开一个 WebView 并行抓，总耗时取最大值而不是相加
+            busy = all.first
+            // 各平台各自开一个 WebView 并行抓，总耗时取最大值而不是相加
             let results = await withTaskGroup(of: (Platform, String).self) { group -> [(Platform, String)] in
-                for platform in platforms {
+                for platform in all {
                     group.addTask { @MainActor in
                         do {
                             let outcome = try await OrderClient.fetch(platform: platform)
@@ -243,42 +237,16 @@ final class AppState: ObservableObject {
                 for await item in group { out.append(item) }
                 return out
             }
-            var lines = platforms.map { p in results.first(where: { $0.0 == p })?.1 ?? "" }
+            var lines = all.map { p in results.first(where: { $0.0 == p })?.1 ?? "" }
             lines.removeAll { $0.isEmpty }
-            for p in slowPlatforms {
-                lines.append("\(p.name)：后台抓取中，抓完自动更新")
-            }
             reload()
             busy = nil
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "last_refresh_at")
             if !quiet { show(lines.joined(separator: "；")) }
-            if !slowPlatforms.isEmpty { runSlowPlatform(.jd) }
             enrichTaobaoTrace()
             BackgroundRefresh.schedule()
             let changes = BackgroundRefresh.diff(orders: orders)
             if !quiet { BackgroundRefresh.post(changes) }
-        }
-    }
-}
-
-extension AppState {
-    /// 京东这类「一次要 9 秒」的平台：不阻塞刷新，抓完直接刷新列表。
-    func runSlowPlatform(_ platform: Platform) {
-        guard !jdBusy else { return }
-        jdBusy = true
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.jdBusy = false }
-            do {
-                let outcome = try await OrderClient.fetch(platform: platform)
-                if !outcome.orders.isEmpty || outcome.authoritative {
-                    OrderStore.shared.replace(platform: platform, with: outcome.orders)
-                }
-                self.reload()
-                self.show("\(platform.name)：\(outcome.note)")
-            } catch {
-                self.show("\(platform.name)：\(error.localizedDescription)")
-            }
         }
     }
 }

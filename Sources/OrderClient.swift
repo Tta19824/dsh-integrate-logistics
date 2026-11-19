@@ -1049,6 +1049,7 @@ enum OrderClient {
             list.append(DebugFile(id: "jddetail-\(platform.rawValue)", label: "订单详情页", url: jdDetailFile(for: platform)))
             list.append(DebugFile(id: "jdreq-\(platform.rawValue)", label: "直连请求", url: JdDirect.requestFile()))
             list.append(DebugFile(id: "jdinpage", label: "页内直取", url: jdInPageFile()))
+            list.append(DebugFile(id: "jdpc", label: "电脑版列表", url: jdPCListFile()))
             list.append(DebugFile(id: "jdlisthtml", label: "列表HTML", url: jdListHTMLFile()))
             list.append(DebugFile(id: "jdlisttext", label: "列表文本", url: jdListTextFile()))
         }
