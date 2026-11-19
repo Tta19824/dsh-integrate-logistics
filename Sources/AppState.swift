@@ -1,4 +1,4 @@
-import SwiftUI
+﻿import SwiftUI
 
 @MainActor
 final class AppState: ObservableObject {
@@ -40,11 +40,10 @@ final class AppState: ObservableObject {
     }
 
     func isLoggedIn(_ platform: Platform) -> Bool {
-        if CookieStore.hasLogin(CookieStore.load(for: platform), platform: platform) { return true }
-        // 京东有电脑版会话（thor/pin）也算登录：手机版失效时它是唯一的活口，
-        // 以前这里只认 pt_key，电脑版登得好好的，界面还是一句「先去登录」。
-        if platform == .jd, hasPcLogin(platform) { return true }
-        return false
+        // 京东只认电脑版（thor/pin）：0.36.18 起手机版那条路整条删了，
+        // 还留着 pt_key 也算「已登录」会让界面骗人（绿点亮着、刷新却去点电脑版登录）。
+        if platform == .jd { return hasPcLogin(platform) }
+        return CookieStore.hasLogin(CookieStore.load(for: platform), platform: platform)
     }
 
     func loginTime(_ platform: Platform) -> Date? {
@@ -162,7 +161,7 @@ final class AppState: ObservableObject {
                 // 京东这条 note 里带「降级」就是被风控挡了：界面上的绿点不该继续说「已登录」
                 if platform == .jd {
                     jdBlocked = outcome.note.contains("降级") || outcome.note.contains("被风控")
-                    if !outcome.orders.isEmpty { enrichJdPickup() }
+                    // 取件码补抓暂时停用：它走的是手机版详情页，0.36.18 把手机版删了（下一步改电脑版详情页）
                 }
                 show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)")
             } catch {
@@ -318,7 +317,7 @@ final class AppState: ObservableObject {
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "last_refresh_at")
             if !quiet { show(lines.joined(separator: "；")) }
             enrichTaobaoTrace()
-            enrichJdPickup()
+            // enrichJdPickup()（同上，等电脑版详情页）
             BackgroundRefresh.schedule()
             let changes = BackgroundRefresh.diff(orders: orders)
             if !quiet { BackgroundRefresh.post(changes) }

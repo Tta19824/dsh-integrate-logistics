@@ -1213,7 +1213,19 @@ final class WebOrderFetcher: NSObject {
               if (imgs.length > 60) break;
             }
           } catch (err) {}
-          return JSON.stringify({ t: text, i: imgs });
+          // 每条订单的「订单详情」链接也一起带回去：详情页 URL 带签名/时间戳，自己拼不出来，
+          // 只能从列表页的 <a href> 里捡。物流详情/取件码就靠它。
+          var links = {};
+          try {
+            var as = (e || document).querySelectorAll('a[href]');
+            for (var j = 0; j < as.length; j++) {
+              var h = as[j].href || '';
+              var m = h.match(/(?:orderId|orderid|deal_id)=(\d{6,25})/);
+              if (m) links[m[1]] = h;
+              if (j > 400) break;
+            }
+          } catch (err2) {}
+          return JSON.stringify({ t: text, i: imgs, l: links });
         })()
         """
         let payload = (try? await wv.evaluateJavaScript(js)) as? String ?? ""

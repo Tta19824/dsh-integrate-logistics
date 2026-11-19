@@ -1,4 +1,4 @@
-import SwiftUI
+﻿import SwiftUI
 import UIKit
 
 struct PlatformsView: View {
@@ -317,8 +317,14 @@ struct PlatformRow: View {
             }
 
             HStack(spacing: 10) {
-                Button(loggedIn ? "重新登录" : "登录") {
-                    app.loginPlatform = platform
+                Button(platform == .jd
+                       ? (app.hasPcLogin(platform) ? "电脑版重登" : "电脑版登录")
+                       : (loggedIn ? "重新登录" : "登录")) {
+                    if platform == .jd {
+                        app.pcLoginPlatform = .jd
+                    } else {
+                        app.loginPlatform = platform
+                    }
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -341,16 +347,6 @@ struct PlatformRow: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(.red)
-
-                    // 绿点只代表「有 cookie」，不代表京东还认它。这个按钮直接问京东一次。
-                    Button("体检") { app.probeJdSession() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(app.probing)
-
-                    Button("电脑版登录") { app.pcLoginPlatform = .jd }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
                 }
 
                 Spacer()
@@ -380,11 +376,11 @@ struct PlatformRow: View {
             }
         }
         .padding(.vertical, 4)
-        .confirmationDialog("清空京东的登录态？", isPresented: $confirmClear, titleVisibility: .visible) {
-            Button("清掉，重新登录", role: .destructive) { app.clearLogin(.jd) }
+        .confirmationDialog("清空京东电脑版的登录态？", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("清掉，重新扫码登录", role: .destructive) { app.clearPcLogin(.jd) }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("会删掉钥匙串里的凭证、网页里的 cookie 和直开存档。适用于「已登录但京东说账号信息获取失败」。")
+            Text("会删掉电脑版（thor/pin）凭证。适用于「电脑版曾经登过、但订单页显示请登录」。")
         }
     }
 }

@@ -1,4 +1,4 @@
-import SwiftUI
+﻿import SwiftUI
 import CoreLocation
 import UIKit
 
@@ -527,12 +527,14 @@ struct LogisticsSheet: View {
             await refreshRoute()
             return
         }
-        guard let cookie = await CookieStore.currentHeader(for: .jd), !cookie.isEmpty else {
-            message = "还没登录京东，先去「平台」页登录"
+        // 京东只走电脑版：详情页也用 thor/pin，不再碰手机版 pt_key。
+        let pcCookie = CookieStore.loadPc(for: .jd) ?? ""
+        guard !pcCookie.isEmpty else {
+            message = "京东还没登录电脑版，先去「平台」页点「电脑版登录」"
             loading = false
             return
         }
-        guard let cap = try? await OrderClient.captureJdDetail(orderNo: order.orderNo, cookieHeader: cookie) else {
+        guard let cap = try? await OrderClient.captureJdDetail(orderNo: order.orderNo, cookieHeader: pcCookie) else {
             message = "没打开京东订单详情页"
             loading = false
             return

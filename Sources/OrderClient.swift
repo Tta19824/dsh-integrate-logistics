@@ -129,10 +129,18 @@ enum OrderClient {
     /// 淘宝订单详情页的页面文字（排查快递公司与轨迹用）
     static func captureJdDetail(orderNo: String, cookieHeader: String,
                                 slot: String = "detail-jd", seconds: Double = 9) async throws -> WebOrderFetcher.Capture {
-        let urls = [
-            "https://trade.m.jd.com/order/n_detail_jdm.shtml?deal_id=\(orderNo)",
-            "https://order.m.jd.com/orderDetail?orderId=\(orderNo)"
-        ].compactMap { URL(string: $0) }
+        // 京东现在只走电脑版（thor/pin），详情页也得用电脑版的地址。
+        // 列表页里捡到的「订单详情」链接最准（带签名），捡不到再退回猜一个。
+        let pcMode = cookieHeader.contains("thor=")
+        var candidates: [String] = []
+        if pcMode {
+            if let known = JdPCLinks.url(for: orderNo) { candidates.append(known) }
+            candidates.append("https://order.jd.com/center/viewOrder.action?orderId=\(orderNo)")
+        } else {
+            candidates.append("https://trade.m.jd.com/order/n_detail_jdm.shtml?deal_id=\(orderNo)")
+            candidates.append("https://order.m.jd.com/orderDetail?orderId=\(orderNo)")
+        }
+        let urls = candidates.compactMap { URL(string: $0) }
         guard !urls.isEmpty else { throw FetchError.badURL }
 
         var best: WebOrderFetcher.Capture?
@@ -149,7 +157,7 @@ enum OrderClient {
                 // 于是一定要等满 21 秒的轮询上限，这才是「点进物流详情等很久」的真正原因。
                 readyJS: "(/运输中|已签收|派送中|已送达|运单号|承运人|取件码|待取件|提货|自提|投递/.test(document.body.innerText)) ? '1' : '0'",
                 slot: slot,
-                referer: "https://my.m.jd.com/"
+                referer: pcMode ? "https://order.jd.com/center/list.action" : "https://my.m.jd.com/"
             ) else { continue }
             // 京东风控页：「验证一下，购物无忧」，只有几十个字，换下一个地址
             let trimmed = cap.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -177,7 +185,7 @@ enum OrderClient {
         // 京东允许「手机版没 cookie、但有电脑版 thor/pin」—— 那条活路由 fetchJd 自己判断，
         // 别在这里一刀切掉（0.36.14 实测：电脑版登上了，刷新还是「先去登录」）。
         if platform == .jd {
-            return try await fetchJd(cookie: CookieStore.load(for: .jd) ?? "")
+            return try await fetchJd()
         }
         guard let cookie = CookieStore.load(for: platform), !cookie.isEmpty else {
             throw FetchError.noCookie
@@ -188,7 +196,7 @@ enum OrderClient {
         case .tb:
             return try await fetchTaobao(cookie: cookie)
         case .jd:
-            return try await fetchJd(cookie: cookie)
+            return try await fetchJd()
         }
     }
 
@@ -282,6 +290,9 @@ enum OrderClient {
                    let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     pcText = (obj["t"] as? String) ?? ""
                     pcImgs = (obj["i"] as? [String]) ?? []
+                    if let links = obj["l"] as? [String: String], !links.isEmpty {
+                        JdPCLinks.save(links)
+                    }
                 } else {
                     pcText = body
                 }
@@ -335,301 +346,68 @@ enum OrderClient {
         return out
     }
 
-    private static func fetchJd(cookie: String) async throws -> FetchOutcome {
+    /// 京东：**只走电脑版**（`thor`/`pin` 那套独立会话）。
+    /// 手机版（`pt_key`）那条路 2026-11-19 整条删掉：实测会话 1.5～3 小时就失效
+    /// （14:53→17:48、19:34→21:00），每次都要重登 + 过滑块/短信验证，代价远大于收益。
+    /// 代价是电脑版只列「近 3 个月」；对「在途单/取件码」够用，库里的历史单按订单号补在后面。
+    /// 电脑版列表页里带出来的「订单号 → 订单详情 URL」。
+    /// 详情页 URL 带签名/时间戳，不能自己拼，只能从列表页的 <a href> 里捡；
+    /// 刷新时顺手存下来，点「物流详情」直接用，省掉自己猜 URL 那一步。
+    enum JdPCLinks {
+        private static let key = "jd_pc_links"
+
+        static func save(_ map: [String: String]) {
+            guard !map.isEmpty else { return }
+            var merged = all()
+            for (k, v) in map { merged[k] = v }
+            UserDefaults.standard.set(merged, forKey: key)
+        }
+
+        static func all() -> [String: String] {
+            (UserDefaults.standard.dictionary(forKey: key) as? [String: String]) ?? [:]
+        }
+
+        static func url(for orderNo: String) -> String? {
+            all()[orderNo]
+        }
+    }
+    private static func fetchJd() async throws -> FetchOutcome {
         let started = Date()
-        var diag: [String] = []
         var dump: [String] = []
-        // 排查风控时最先要看的就是「这次以什么身份去的」，所以把 UA 和凭证时间写在最前面
         var stampText = "未知"
-        if let at = CookieStore.savedAt(for: .jd) {
+        if let at = CookieStore.savedAtPc(for: .jd) {
             let formatter = DateFormatter()
             formatter.dateFormat = "MM-dd HH:mm"
             stampText = formatter.string(from: at)
         }
-        dump.append("【版本】\(Self.appVersion())\n【身份】\(UserAgent.iOS)\n【凭证】\(cookie.count) 字节·存于 \(stampText)")
-        // 手机版 cookie 没了、但电脑版（thor/pin）还在：直接走电脑版。
-        // 以前这里先 throw noCookie，结果「电脑版明明登上了」却被一句「先去登录」堵死。
-        if cookie.isEmpty {
-            guard let pcCookie = CookieStore.loadPc(for: .jd), pcCookie.contains("thor=") else {
-                _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
-                throw FetchError.noCookie
-            }
-            let pcStart = Date()
-            let pc = await jdPCRows(cookie: pcCookie)
-            dump.append(pc.dump)
-            diag.append(pc.diag)
-            diag.append("PC:\(String(format: "%.1f", Date().timeIntervalSince(pcStart)))s")
-            dump.append("【手机版】没有 cookie，这一趟只走电脑版")
+        dump.append("【版本】\(Self.appVersion())\n【通道】京东电脑版（thor/pin）\n【凭证】存于 \(stampText)")
+        guard let pcCookie = CookieStore.loadPc(for: .jd), pcCookie.contains("thor=") else {
             _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
-            guard !pc.orders.isEmpty else {
-                throw FetchError.note("电脑版已登录，但订单页里没解析到订单 —— 发「调试 · 抓取文件 → 京东 → 电脑版列表」给我")
-            }
-            let pcCost = String(format: "%.1f", Date().timeIntervalSince(started))
-            return FetchOutcome(
-                orders: pc.orders,
-                httpStatus: 200,
-                byteCount: pc.orders.count,
-                rawFileURL: jdPCListFile(),
-                note: "京东电脑版 \(pc.orders.count) 条（手机版未登录）· 用时 \(pcCost) 秒",
-                payloadJSON: "",
-                authoritative: true
-            )
+            throw FetchError.note("京东现在走电脑版登录：点「京东 → 电脑版登录」，用京东 App 扫码登一次就好")
         }
-        // 快路零：电脑版（thor/pin）当主路。
-        // 为什么换过来：手机版 `pt_key` 的会话寿命实测只有 1.5～3 小时（14:53→17:48、19:34→21:00），
-        // 而电脑版是另一套会话，扫码登一次能一直用；代价是它只列「近 3 个月」，对在途单够用。
-        // 命中就 1.2 秒返回，不再等症状已死的手机版页面白等 6～9 秒。
-        if let pcCookie = CookieStore.loadPc(for: .jd), pcCookie.contains("thor=") {
-            let pcStart = Date()
-            let pc = await jdPCRows(cookie: pcCookie)
-            dump.append(pc.dump)
-            diag.append(pc.diag)
-            if !pc.orders.isEmpty {
-                // 电脑版只列「近 3 个月」，库里的历史单（手机版以前抓到的）不要丢掉：
-                // 新结果打头，老单按订单号去重补在后面。手机版活着时它们会被重新刷成最新的。
-                let known = Set(pc.orders.map { $0.orderNo })
-                let history = OrderStore.shared.all()
-                    .filter { $0.platform == .jd && !known.contains($0.orderNo) }
-                let merged = pc.orders + history
-                let pcCost = String(format: "%.1f", Date().timeIntervalSince(started))
-                dump.append("【采用电脑版】\(pc.orders.count) 条（主路）＋历史 \(history.count) 条")
-                _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
-                return FetchOutcome(
-                    orders: merged,
-                    httpStatus: 200,
-                    byteCount: merged.count,
-                    rawFileURL: jdPCListFile(),
-                    note: "京东电脑版 \(pc.orders.count) 条（主路）" + (history.isEmpty ? "" : "＋历史 \(history.count) 条") + "· 用时 \(pcCost) 秒",
-                    payloadJSON: "",
-                    authoritative: true
-                )
-            }
-            diag.append("PC:\(String(format: "%.1f", Date().timeIntervalSince(pcStart)))s/0条")
-        }
-
-        // 快路一：直开。只在这条存档「新鲜且上次验过」时才走 —— 0.36.3 实测：
-        // 两小时前的 URL 重放回来是 `{"code":"0","message":"success"…}` 的空壳（没有 orderList），
-        // 所以 URL 里的 x-api-eid-token/会话参数是**有时效**的，刷新 t 复活不了。
-        if let saved = JdFast.last(), JdFast.isTrusted() {
-            let fresh = JdFast.refreshT(saved.url)
-            let raw = await WebOrderFetcher.shared.jdLoadJSONDirect(
-                url: fresh,
-                headers: JdFast.safeHeaders(saved.headers, body: saved.body ?? ""),
-                cookieHeader: cookie,
-                timeout: 6
-            )
-            if let out = jdOutcome(raw: raw, label: "直开", url: fresh, started: started, diag: &diag) {
-                JdFast.markHit(true)
-                return out
-            }
-            JdFast.markHit(false)
-            dump.append("【直开】存档 age=\(JdFast.ageMinutes()) 分钟\nURL: \(fresh)\n结果: \(String(raw.prefix(1500)))")
-        } else if JdFast.last() == nil {
-            diag.append("无存档")
-        } else {
-            diag.append("存档\(JdFast.ageMinutes())分钟前/未验过")
-        }
-
-        // 快路二：让页面自己去拉订单。先 my.m.jd.com（SPA 订单楼层），再 trade.m.jd.com 的订单列表页。
-        // 新鲜、不用等整页渲染；页面正常时 3 秒左右。
-        var picks: [WebOrderFetcher.JdPagePick] = []
-        let pageURLs = [
-            "https://my.m.jd.com/index.html?sceneval=2",
-            "https://trade.m.jd.com/order/orderlist_jdm.shtml"
-        ]
-        for (index, pageURL) in pageURLs.enumerated() {
-            let pick = await WebOrderFetcher.shared.jdOrderListFromPage(cookieHeader: cookie, urlString: pageURL)
-            picks.append(pick)
-            // 「热」= 这次没重新加载页面，用的是刚打开过的那份响应。note 里标出来，
-            // 用户看到「0.1 秒」时才知道是复用，不是抓了个旧数据。
-            let tag = (index == 0 ? "自取my" : "自取trade") + (pick.reused ? "·热" : "")
-            if !pick.entry.isEmpty {
-                // 页面可能发了不止一条订单接口（翻页 / 切 tab），全部交回去让解析器按订单号去重
-                let used = pick.entries.isEmpty ? [pick.entry] : pick.entries
-                let wrapped = "[" + used.joined(separator: ",") + "]"
-                let orders = TaobaoJdParser.parse(platform: .jd, text: "", payloadJSON: wrapped)
-                // 一页 10 条。正好 10 条就说明后面还有 —— 用刚抓到的这条 URL 把第 2、3 页要回来。
-                // 「到货没取的订单刷不出来」就是这么丢的：只解析了第 1 页。
-                var allOrders = orders
-                var pageNote = ""
-                if orders.count >= 10 {
-                    // 翻页要拿抓包里的原始 URL（里面有 body 的 JSON）。0.36.10 之前这条 URL
-                    // 在钩子里被截到 400 字，改 page 必然失败，而失败是**静默**的 —— 所以写清楚。
-                    let last = used.last ?? ""
-                    // 这个账号手机版就一页时，每次刷新都为第 2 页白花 0.7 秒。
-                    // 半小时内已经问过「没有第 2 页」就直接跳过；真拿到第 2 页会清掉记号。
-                    let noPage2At = UserDefaults.standard.double(forKey: "jd_no_page2_at")
-                    if Date().timeIntervalSince1970 - noPage2At < 1800 {
-                        pageNote += " 第2页:半小时内已知没有(跳过)"
-                    } else if let base = JdDirect.url(ofEntry: last) {
-                        if JdDirect.urlReplacingPage(base, page: 2) != nil {
-                            let hdrs = ["content-type": "application/json;charset=UTF-8",
-                                        "x-rp-client": "h5_2.6.0",
-                                        "x-referer-page": "https://trade.m.jd.com/order/orderlist_jdm.shtml"]
-                            for page in 2...3 {
-                                guard let next = JdDirect.urlReplacingPage(base, page: page) else {
-                                    pageNote += " 第\(page)页:改URL失败"
-                                    break
-                                }
-                                let raw = await WebOrderFetcher.shared.inPageReplay(
-                                    slot: "list-jd", url: next, method: "GET", headers: hdrs, body: "", timeoutMS: 6000)
-                                guard raw.hasPrefix("200|") else {
-                                    pageNote += " 第\(page)页:\(raw.prefix(40))"
-                                    break
-                                }
-                                let body = String(raw.dropFirst(4))
-                                guard body.contains("orderList") else {
-                                    pageNote += " 第\(page)页:无orderList(\(body.count)字)"
-                                    if page == 2 {
-                                        UserDefaults.standard.set(Date().timeIntervalSince1970,
-                                                                  forKey: "jd_no_page2_at")
-                                    }
-                                    break
-                                }
-                                let more = TaobaoJdParser.parse(platform: .jd, text: "",
-                                                                payloadJSON: JdDirect.entryWrapping(body: body))
-                                let fresh = more.filter { o in !allOrders.contains { $0.orderNo == o.orderNo } }
-                                pageNote += " 第\(page)页:+\(fresh.count)"
-                                allOrders += fresh
-                                // 第 2 页真拿到东西了：把「已知没有」的记号清掉
-                                UserDefaults.standard.removeObject(forKey: "jd_no_page2_at")
-                                if fresh.isEmpty { break }
-                            }
-                        } else {
-                            pageNote += " 翻页:URL里找不到body参数(\(base.count)字)"
-                        }
-                    } else {
-                        pageNote += " 翻页:抓包URL取不到(\(last.count)字)"
-                    }
-                }
-                let roster = allOrders.map { o in
-                    "\(o.orderNo) \(o.statusRaw) → \(o.status.label)｜\(o.title.prefix(24))"
-                }.joined(separator: "\n")
-                dump.append("【\(tag)】接口 \(used.count) 条 → 解析 \(orders.count) 条\(pageNote.isEmpty ? "" : "·翻页\(pageNote)")\n逐单：\n\(roster)\n抓包记录前 800 字：\(String(wrapped.prefix(800)))")
-                if !allOrders.isEmpty {
-                    JdFast.save(fromPayload: wrapped)
-                    JdFast.markHit(true)
-                    let cost = String(format: "%.1f", Date().timeIntervalSince(started))
-                    _ = write(wrapped, to: payloadFile(for: .jd))
-                    _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
-                    return FetchOutcome(
-                        orders: allOrders,
-                        httpStatus: 200,
-                        byteCount: wrapped.count,
-                        rawFileURL: payloadFile(for: .jd),
-                        note: "京东页面自取 \(allOrders.count) 条（\(tag)·接口\(used.count)条\(pageNote.isEmpty ? "" : "·翻页")）· 用时 \(cost) 秒",
-                        payloadJSON: wrapped,
-                        authoritative: true
-                    )
-                }
-                diag.append(tag + ":抓到接口但0条")
-            } else {
-                diag.append(tag + ":" + pick.reason)
-            }
-            dump.append("【\(tag)】\(pick.reason)\nURL: \(pageURL)\n页面正文开头: \(pick.textHead)\n接口一览: \(String(pick.captured.prefix(3000)))")
-            // 「我的」页已经拉了一堆接口却没有订单接口 = 会话被降级。
-            // 再开 trade 页只是再等 6 秒等同一件事，跳过（0.36.13 实测一次要 9 秒，其中一半是这个）。
-            if index == 0, pick.responses >= 6 { break }
-        }
-
-        let maxResponses = picks.map { $0.responses }.max() ?? 0
-        // 手机版没抓到接口时，先看「页面自己说了什么」，这比「无结果」三个字有用得多。
-        let failHint: String = {
-            let heads = picks.map { $0.textHead }.joined(separator: " ")
-            if heads.contains("账号信息获取失败") { return "京东不认这份登录态" }
-            if heads.contains("快速验证") || heads.contains("验证一下") { return "被要求验证" }
-            if heads.contains("大促异常火爆") { return "京东侧降级" }
-            if heads.contains("请登录") || heads.contains("免费注册") { return "页面显示未登录" }
-            if maxResponses >= 6 { return "页面接口 \(maxResponses) 条但没有订单接口" }
-            return "页面没跑起来（接口 \(maxResponses) 条）"
-        }()
-        // 库里已经有京东订单时，这一趟的目标就变成「别把好数据弄坏」：
-        // 0.36.12 实测过一次惨案 —— 手机版失败、电脑版只给 1 条且没有图，
-        // 结果 10 条带图的列表被它顶掉了。所以电脑版只在库是空的时候才顶上来。
-        // 电脑版这一轮开头已经当主路试过了（拿不到才会走到这里），这里不再重复跑。
-        let existing = OrderStore.shared.all().filter { $0.platform == .jd }
-        let costSoFar = String(format: "%.1f", Date().timeIntervalSince(started))
-        if !existing.isEmpty {
-            // 库里有列表：不要再烧 14 秒慢路，也不要拿 1 条无图订单顶掉它。
-            // 返回空 + authoritative: false，AppState.refresh 就不会 replace。
-            dump.append("【保留上次】京东手机版这次没抓到（\(failHint)），库里 \(existing.count) 条原样保留")
+        let pc = await jdPCRows(cookie: pcCookie)
+        dump.append(pc.dump)
+        guard !pc.orders.isEmpty else {
             _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
-            return FetchOutcome(
-                orders: [],
-                httpStatus: 200,
-                byteCount: 0,
-                rawFileURL: jdInPageFile(),
-                note: "京东手机版没抓到（\(failHint)）· 保留上次 \(existing.count) 条 · 用时 \(costSoFar) 秒",
-                payloadJSON: "",
-                authoritative: false
-            )
+            throw FetchError.note("京东电脑版已登录，但订单页里没解析到订单（\(pc.diag)）—— 发「调试 · 抓取文件 → 京东 → 电脑版列表」给我")
         }
-
-        if maxResponses >= 6 {
-            // 页面本身跑起来了（接口一堆），但就是没有订单接口 → 京东侧降级/会话被拦。
-            // 这时再跑一遍慢路（同一个页面）只会多花 10 秒，直接报清楚。
-            dump.append("【跳过慢路】页面接口 \(maxResponses) 条但没有订单接口")
-            _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
-            let head = picks.first.map { String($0.textHead.prefix(30)) } ?? ""
-            let cost = String(format: "%.1f", Date().timeIntervalSince(started))
-            return FetchOutcome(
-                orders: [],
-                httpStatus: 200,
-                byteCount: 0,
-                rawFileURL: jdInPageFile(),
-                note: "京东侧降级：页面 \(maxResponses) 个接口响应里没有订单接口「\(head)」· 先别连刷，过一阵再试；一直这样就重登京东 · 用时 \(cost) 秒",
-                payloadJSON: "",
-                authoritative: false
-            )
-        }
-        // 慢路：页面连接口都没跑起来时最后再试一次完整渲染
-        let out = try await fetchWebOrders(
-            platform: .jd,
-            cookie: cookie,
-            urls: ["https://my.m.jd.com/index.html?sceneval=2"],
-            seconds: 14,
-            clickTexts: ["全部订单"],
-            clickReadyJS: "(document.body.innerText.match(/订单号/g) || []).length >= 1 ? '1' : '0'"
-        )
-        var extra = "；快路：" + diag.joined(separator: " / ")
-        if out.orders.isEmpty {
-            let diag2 = await jdPCListDiagnostic(cookie: cookie)
-            extra += "；" + diag2
-        } else {
-            // 抓到就立刻存档，并马上用「直开」验一次 —— 验过，下次刷新才敢走快路
-            let before = JdFast.loadAll().count
-            JdFast.save(fromPayload: out.payloadJSON)
-            extra += "；存档\(before)→\(JdFast.loadAll().count)" + JdFast.diagnose(payloadJSON: out.payloadJSON)
-            if let saved = JdFast.last() {
-                let raw = await WebOrderFetcher.shared.jdLoadJSONDirect(
-                    url: JdFast.refreshT(saved.url),
-                    headers: JdFast.safeHeaders(saved.headers, body: saved.body ?? ""),
-                    cookieHeader: cookie,
-                    timeout: 6
-                )
-                extra += "；存档校验" + replayBrief(raw)
-                JdFast.markHit(raw.hasPrefix("200|") && raw.contains("orderList"))
-                dump.append("【存档校验】刚存下的 URL\nURL: \(saved.url)\n结果: \(String(raw.prefix(1500)))")
-            } else {
-                let caps = await WebOrderFetcher.shared.jdCapturedRequests()
-                dump.append("【没存上】抓到的和订单相关的请求：\n" + caps)
-                extra += "；存档没存上（详情见 jd_inpage.txt）"
-            }
-        }
-        dump.append("【note】" + diag.joined(separator: " / "))
-        _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
-        let base = out.note.replacingOccurrences(of: #" · 用时 [\d.]+ 秒"#, with: "", options: .regularExpression)
+        // 电脑版只列近 3 个月，库里以前抓到的历史单不要丢：新结果打头，老单按订单号补在后面。
+        let known = Set(pc.orders.map { $0.orderNo })
+        let history = OrderStore.shared.all().filter { $0.platform == .jd && !known.contains($0.orderNo) }
+        let merged = pc.orders + history
         let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+        dump.append("【采用电脑版】\(pc.orders.count) 条（主路）＋历史 \(history.count) 条")
+        _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
         return FetchOutcome(
-            orders: out.orders,
-            httpStatus: out.httpStatus,
-            byteCount: out.byteCount,
-            rawFileURL: out.rawFileURL,
-            note: "京东手机版 " + base + extra + " · 用时 " + cost + " 秒",
-            payloadJSON: out.payloadJSON
+            orders: merged,
+            httpStatus: 200,
+            byteCount: merged.count,
+            rawFileURL: jdPCListFile(),
+            note: "京东电脑版 \(pc.orders.count) 条" + (history.isEmpty ? "" : "＋历史 \(history.count) 条") + "· 用时 \(cost) 秒",
+            payloadJSON: "",
+            authoritative: true
         )
     }
-
     /// 试一次页内重放；成功就拼成 FetchOutcome 返回，失败只往 diag 里记一句
     private static func jdReplayOutcome(slot: String, label: String, url: String, saved: JdFast.Saved,
                                         timeoutMS: Double, started: Date, diag: inout [String]) async -> FetchOutcome? {
