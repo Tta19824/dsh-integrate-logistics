@@ -151,7 +151,8 @@ final class WebOrderFetcher: NSObject {
           function push(u, t, r) {
             try {
               if (typeof t !== 'string' || t.length === 0 || t.length > 900000) return;
-              var item = { u: String(u || '').slice(0, 400), b: t };
+              // 400 字装不下带 body 的订单接口 URL（翻页要靠它改 page），留长一点
+              var item = { u: String(u || '').slice(0, 8000), b: t };
               if (r) item.r = r;
               window.__dshCap.push(item);
             } catch (e) {}

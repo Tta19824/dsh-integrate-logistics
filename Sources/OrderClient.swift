@@ -258,14 +258,15 @@ enum OrderClient {
             formatter.dateFormat = "MM-dd HH:mm"
             stampText = formatter.string(from: at)
         }
-        dump.append("【身份】\(UserAgent.iOS)\n【凭证】\(cookie.count) 字节·存于 \(stampText)")
+        dump.append("【版本】\(Self.appVersion())\n【身份】\(UserAgent.iOS)\n【凭证】\(cookie.count) 字节·存于 \(stampText)")
         // 快路零：电脑版订单页。用的是 thor/pin 那套**独立会话**（桌面 UA），
         // 手机版 pt_key 被风控时它往往还活着；而且这页是服务端渲染，一份 HTML 就是全部订单。
         if let pc = CookieStore.loadPc(for: .jd), pc.contains("thor=") {
             let (status, html) = await JdDirect.fetchOrderListHTML(cookie: pc)
             var pcRows = JdPCList.parse(html: html)
             var pcSource = "HTML直取"
-            var pcText = ""
+            var pcText = HTMLTools.strip(html)
+            var renderNote = ""
             if pcRows.isEmpty {
                 // 直取没解析到：可能是 JS 渲染版或者被踢回登录页，让桌面槽渲染一遍再试
                 let rendered = await WebOrderFetcher.shared.jdPCListRender(cookieHeader: pc)
@@ -274,10 +275,25 @@ enum OrderClient {
                     pcRows = JdPCList.parse(text: pcText)
                     pcSource = "桌面渲染"
                 } else {
-                    dump.append("【PC渲染】\(rendered)")
+                    renderNote = "【渲染失败】\(rendered)"
                 }
             }
+            // 电脑版这一路到底看见了什么，全部写进「调试 · 抓取文件 → 电脑版列表」那一份，
+            // 免得又出现「只有一个数字、看不出问题在哪」的情况。
+            let keys = ["订单号", "请登录", "我的订单", "等待付款", "等待收货", "已完成", "验证"]
+            let counts = keys.map { $0 + "×" + String(JdDirect.occurrences(of: $0, in: html)) }.joined(separator: "·")
+            var pcHeader = "【版本】\(Self.appVersion())\n【电脑版】HTML HTTP \(status) · \(html.count) 字 · \(counts)"
+            if !renderNote.isEmpty { pcHeader += "\n" + renderNote }
+            if !pcText.isEmpty { pcHeader += "\n【正文 \(pcText.count) 字·开头 800】\n\(String(pcText.prefix(800)))" }
             if !pcRows.isEmpty {
+                pcHeader += "\n【解析 \(pcRows.count) 条】"
+                    + pcRows.map { "\($0.orderNo)/\($0.statusRaw)/\(String($0.title.prefix(16)))" }.joined(separator: " ｜ ")
+            }
+            try? (pcHeader + "\n\n---- 正文全文 ----\n" + pcText)
+                .data(using: .utf8)?.write(to: jdPCListFile(), options: .atomic)
+            // 一千来字只解析出一行的那种，基本是登录页/错误页：不能拿它当结果，否则真实订单会被它顶掉
+            let pcTrustworthy = pcRows.count >= 2 || (pcRows.count == 1 && pcText.count >= 2000)
+            if !pcRows.isEmpty, pcTrustworthy {
                 let orders: [Order] = pcRows.map { row in
                     Order(id: Order.makeID(platform: .jd, orderNo: row.orderNo),
                           platform: .jd,
@@ -293,23 +309,19 @@ enum OrderClient {
                           updatedAt: Date())
                 }
                 let cost = String(format: "%.1f", Date().timeIntervalSince(started))
-                let text = pcText.isEmpty ? HTMLTools.strip(html) : pcText
-                try? text.data(using: .utf8)?.write(to: jdPCListFile(), options: .atomic)
                 _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
                 return FetchOutcome(
                     orders: orders,
                     httpStatus: 200,
-                    byteCount: text.count,
+                    byteCount: pcText.count,
                     rawFileURL: jdPCListFile(),
                     note: "京东电脑版直取 \(orders.count) 条（\(pcSource)）· 用时 \(cost) 秒",
                     payloadJSON: "",
                     authoritative: true
                 )
             }
-            let keys = ["订单号", "请登录", "我的订单", "等待付款", "等待收货", "已完成"]
-            let counts = keys.map { $0 + "×" + String(JdDirect.occurrences(of: $0, in: html)) }.joined(separator: "·")
-            dump.append("【PC】HTTP \(status) \(html.count) 字 · \(counts)\n正文开头: \(String(HTMLTools.strip(html).prefix(600)))")
-            diag.append("PC:HTTP\(status)/\(html.count)字/0条")
+            dump.append("【PC】" + pcHeader)
+            diag.append("PC:HTTP\(status)/\(html.count)字/\(pcRows.count)条" + (pcRows.isEmpty ? "" : "(可疑,未采用)"))
         }
         // 快路一：直开。只在这条存档「新鲜且上次验过」时才走 —— 0.36.3 实测：
         // 两小时前的 URL 重放回来是 `{"code":"0","message":"success"…}` 的空壳（没有 orderList），
@@ -354,29 +366,43 @@ enum OrderClient {
                 // 「到货没取的订单刷不出来」就是这么丢的：只解析了第 1 页。
                 var allOrders = orders
                 var pageNote = ""
-                if orders.count >= 10, let base = used.last.flatMap(JdDirect.url(ofEntry:)) {
-                    let hdrs = ["content-type": "application/json;charset=UTF-8",
-                                "x-rp-client": "h5_2.6.0",
-                                "x-referer-page": "https://trade.m.jd.com/order/orderlist_jdm.shtml"]
-                    for page in 2...3 {
-                        guard let next = JdDirect.urlReplacingPage(base, page: page) else { break }
-                        let raw = await WebOrderFetcher.shared.inPageReplay(
-                            slot: "list-jd", url: next, method: "GET", headers: hdrs, body: "", timeoutMS: 6000)
-                        guard raw.hasPrefix("200|") else {
-                            pageNote += " 第\(page)页:\(raw.prefix(30))"
-                            break
+                if orders.count >= 10 {
+                    // 翻页要拿抓包里的原始 URL（里面有 body 的 JSON）。0.36.10 之前这条 URL
+                    // 在钩子里被截到 400 字，改 page 必然失败，而失败是**静默**的 —— 所以写清楚。
+                    let last = used.last ?? ""
+                    if let base = JdDirect.url(ofEntry: last) {
+                        if JdDirect.urlReplacingPage(base, page: 2) != nil {
+                            let hdrs = ["content-type": "application/json;charset=UTF-8",
+                                        "x-rp-client": "h5_2.6.0",
+                                        "x-referer-page": "https://trade.m.jd.com/order/orderlist_jdm.shtml"]
+                            for page in 2...3 {
+                                guard let next = JdDirect.urlReplacingPage(base, page: page) else {
+                                    pageNote += " 第\(page)页:改URL失败"
+                                    break
+                                }
+                                let raw = await WebOrderFetcher.shared.inPageReplay(
+                                    slot: "list-jd", url: next, method: "GET", headers: hdrs, body: "", timeoutMS: 6000)
+                                guard raw.hasPrefix("200|") else {
+                                    pageNote += " 第\(page)页:\(raw.prefix(40))"
+                                    break
+                                }
+                                let body = String(raw.dropFirst(4))
+                                guard body.contains("orderList") else {
+                                    pageNote += " 第\(page)页:无orderList(\(body.count)字)"
+                                    break
+                                }
+                                let more = TaobaoJdParser.parse(platform: .jd, text: "",
+                                                                payloadJSON: JdDirect.entryWrapping(body: body))
+                                let fresh = more.filter { o in !allOrders.contains { $0.orderNo == o.orderNo } }
+                                pageNote += " 第\(page)页:+\(fresh.count)"
+                                allOrders += fresh
+                                if fresh.isEmpty { break }
+                            }
+                        } else {
+                            pageNote += " 翻页:URL里找不到body参数(\(base.count)字)"
                         }
-                        let body = String(raw.dropFirst(4))
-                        guard body.contains("orderList") else {
-                            pageNote += " 第\(page)页:无orderList(\(body.count)字)"
-                            break
-                        }
-                        let more = TaobaoJdParser.parse(platform: .jd, text: "",
-                                                        payloadJSON: JdDirect.entryWrapping(body: body))
-                        let fresh = more.filter { o in !allOrders.contains { $0.orderNo == o.orderNo } }
-                        pageNote += " 第\(page)页:+\(fresh.count)"
-                        allOrders += fresh
-                        if fresh.isEmpty { break }
+                    } else {
+                        pageNote += " 翻页:抓包URL取不到(\(last.count)字)"
                     }
                 }
                 let roster = allOrders.map { o in
@@ -1025,6 +1051,13 @@ enum OrderClient {
             }
         }
         return out
+    }
+
+    /// 写进调试文件头，免得「这包是哪一版」都要靠猜
+    static func appVersion() -> String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        return "\(v)(\(b))"
     }
 
     /// 调试用的可分享文件：每个平台只列自己的那几份，且只返回真实存在的
