@@ -251,6 +251,10 @@ enum OrderClient {
         let started = Date()
         var diag: [String] = []
         var dump: [String] = []
+        /// 电脑版（thor/pin）看到的订单。**只当补充，不当唯一结果** ——
+        /// 电脑版列表页默认只显示某几个 tab / 近 3 个月，条数常常比手机版少；
+        /// 0.36.10 就是拿它 early-return，把手机版 10 条顶成 1 条（2026-11-19 实测）。
+        var pcOrders: [Order] = []
         // 排查风控时最先要看的就是「这次以什么身份去的」，所以把 UA 和凭证时间写在最前面
         var stampText = "未知"
         if let at = CookieStore.savedAt(for: .jd) {
@@ -291,10 +295,11 @@ enum OrderClient {
             }
             try? (pcHeader + "\n\n---- 正文全文 ----\n" + pcText)
                 .data(using: .utf8)?.write(to: jdPCListFile(), options: .atomic)
-            // 一千来字只解析出一行的那种，基本是登录页/错误页：不能拿它当结果，否则真实订单会被它顶掉
-            let pcTrustworthy = pcRows.count >= 2 || (pcRows.count == 1 && pcText.count >= 2000)
-            if !pcRows.isEmpty, pcTrustworthy {
-                let orders: [Order] = pcRows.map { row in
+            // 登录页/错误页也会解析出「1 条」，那种页面的特征是正文很短、压根没有「订单号」。
+            // 真订单页哪怕只有一单，正文里一定出现「订单号」这三个字。
+            let pcTrustworthy = !pcRows.isEmpty && (pcRows.count >= 2 || pcText.contains("订单号"))
+            if pcTrustworthy {
+                pcOrders = pcRows.map { row in
                     Order(id: Order.makeID(platform: .jd, orderNo: row.orderNo),
                           platform: .jd,
                           orderNo: row.orderNo,
@@ -308,20 +313,10 @@ enum OrderClient {
                           pickupCode: "",
                           updatedAt: Date())
                 }
-                let cost = String(format: "%.1f", Date().timeIntervalSince(started))
-                _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
-                return FetchOutcome(
-                    orders: orders,
-                    httpStatus: 200,
-                    byteCount: pcText.count,
-                    rawFileURL: jdPCListFile(),
-                    note: "京东电脑版直取 \(orders.count) 条（\(pcSource)）· 用时 \(cost) 秒",
-                    payloadJSON: "",
-                    authoritative: true
-                )
             }
-            dump.append("【PC】" + pcHeader)
-            diag.append("PC:HTTP\(status)/\(html.count)字/\(pcRows.count)条" + (pcRows.isEmpty ? "" : "(可疑,未采用)"))
+            dump.append("【PC·\(pcSource)】" + pcHeader
+                        + (pcOrders.isEmpty ? "\n【未采用】解析结果不可信" : "\n【暂存】\(pcOrders.count) 条，等手机版结果一起合并"))
+            diag.append("PC:HTTP\(status)/\(html.count)字/\(pcRows.count)条" + (pcOrders.isEmpty ? "(未采用)" : "(并入口径)"))
         }
         // 快路一：直开。只在这条存档「新鲜且上次验过」时才走 —— 0.36.3 实测：
         // 两小时前的 URL 重放回来是 `{"code":"0","message":"success"…}` 的空壳（没有 orderList），
@@ -412,6 +407,17 @@ enum OrderClient {
                 if !allOrders.isEmpty {
                     JdFast.save(fromPayload: wrapped)
                     JdFast.markHit(true)
+                    // 电脑版看到但手机版这一页没有的单子，补进来（电脑版不顶掉手机版）
+                    var merged = allOrders
+                    if !pcOrders.isEmpty {
+                        let have = Set(merged.map { $0.orderNo })
+                        let extra = pcOrders.filter { !have.contains($0.orderNo) }
+                        if !extra.isEmpty {
+                            merged += extra
+                            pageNote += " 并入电脑版\(extra.count)"
+                        }
+                    }
+                    allOrders = merged
                     let cost = String(format: "%.1f", Date().timeIntervalSince(started))
                     _ = write(wrapped, to: payloadFile(for: .jd))
                     _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
@@ -433,6 +439,21 @@ enum OrderClient {
         }
 
         let maxResponses = picks.map { $0.responses }.max() ?? 0
+        // 手机版这条路没出订单，但电脑版（thor/pin）看得见 —— 用电脑版的，别让用户空手。
+        if !pcOrders.isEmpty {
+            let cost = String(format: "%.1f", Date().timeIntervalSince(started))
+            dump.append("【采用电脑版】手机版无结果，电脑版 \(pcOrders.count) 条")
+            _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
+            return FetchOutcome(
+                orders: pcOrders,
+                httpStatus: 200,
+                byteCount: pcOrders.count,
+                rawFileURL: jdPCListFile(),
+                note: "京东电脑版 \(pcOrders.count) 条（手机版无结果）· 用时 \(cost) 秒",
+                payloadJSON: "",
+                authoritative: true
+            )
+        }
         if maxResponses >= 6 {
             // 页面本身跑起来了（接口一堆），但就是没有订单接口 → 京东侧降级/会话被拦。
             // 这时再跑一遍慢路（同一个页面）只会多花 10 秒，直接报清楚。

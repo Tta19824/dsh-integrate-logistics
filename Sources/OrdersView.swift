@@ -40,7 +40,14 @@ struct OrdersView: View {
     }
 
     private var activeOrders: [Order] {
-        app.orders.filter { $0.status == .paid || $0.status == .shipped }
+        app.orders.filter { order in
+            if order.status == .paid || order.status == .shipped { return true }
+            // 兜底：状态词没认出来、但明显是「到了驿站等人取」的单子，也得留在列表里。
+            // 以前这里只放 待付款/待收货，京东写「请上门自提」时整条被藏掉（0.36.10 实测）。
+            if !order.pickupCode.isEmpty { return true }
+            let raw = order.statusRaw
+            return raw.contains("自提") || raw.contains("取件") || raw.contains("到站") || raw.contains("投递")
+        }
     }
 
     private var orderList: some View {

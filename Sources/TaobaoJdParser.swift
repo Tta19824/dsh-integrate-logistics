@@ -223,6 +223,13 @@ enum TaobaoJdParser {
     static func jdStatus(_ raw: String) -> OrderStatus {
         if raw.contains("取消") || raw.contains("已关闭") { return .cancelled }
         if raw.contains("退款") || raw.contains("退货") || raw.contains("售后") { return .refunding }
+        // 自提/到站：京东手机版给的是「请上门自提」，用户看到的是「待取件｜取件码 15-6-2127」。
+        // 这句既不含「收货」也不含「发货」，以前落到 .unknown → 列表只显示 待付款/待收货，
+        // 于是「到货没取」的那单被**整条藏掉**（2026-11-19 实测：3682412012461357 抓到了却不显示）。
+        // 必须放在「完成」之前：京东会写「投递完成」，那是到了驿站，不是交易完成。
+        if raw.contains("自提") || raw.contains("取件") || raw.contains("到站") || raw.contains("投递") {
+            return .shipped
+        }
         if raw.contains("完成") || raw.contains("已收货") { return .completed }
         if raw.contains("收货") || raw.contains("发货") || raw.contains("运输")
             || raw.contains("派送") || raw.contains("配送") || raw.contains("途中") { return .shipped }
@@ -318,6 +325,11 @@ enum TaobaoJdParser {
                 let progress = item["progressInfo"] as? [String: Any] ?? [:]
                 let logistics = progress["content"] as? String ?? ""
                 let time = normalizeTime(item["submitDate"] as? String ?? "")
+                // 取件码：接口里写在卡片横幅那句「待取件 ｜ 取件码 15-6-2127」上，
+                // 字段名不固定，所以把整条订单 JSON 拼成一串再按文案找（DetailParser 里已有正则）。
+                let itemJSON = (try? JSONSerialization.data(withJSONObject: item))
+                    .flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                let pickup = DetailParser.pickupCode(from: itemJSON + "\n" + logistics)
 
                 out.append(Order(
                     id: Order.makeID(platform: .jd, orderNo: orderNo),
@@ -330,7 +342,7 @@ enum TaobaoJdParser {
                     statusRaw: statusRaw,
                     orderTime: time,
                     logistics: logistics,
-                    pickupCode: "",
+                    pickupCode: pickup,
                     carrier: "",
                     imageURL: image,
                     goodsID: sku,

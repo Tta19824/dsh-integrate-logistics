@@ -23,7 +23,8 @@ enum JdPCList {
         ("等待付款", .unpaid), ("等待支付", .unpaid), ("未付款", .unpaid), ("待付款", .unpaid),
         ("等待出库", .paid), ("待发货", .paid), ("已付款", .paid),
         ("等待收货", .shipped), ("已发货", .shipped), ("运输中", .shipped), ("派送中", .shipped),
-        ("待取件", .shipped), ("已到站", .shipped),
+        ("待取件", .shipped), ("已到站", .shipped), ("请上门自提", .shipped), ("上门自提", .shipped),
+        ("待自提", .shipped), ("请上门提货", .shipped), ("已投递", .shipped),
         ("已完成", .completed), ("已签收", .completed), ("交易成功", .completed), ("已收货", .completed),
         ("已取消", .cancelled), ("交易关闭", .cancelled), ("已关闭", .cancelled),
         ("退款", .refunding), ("售后", .refunding), ("退货", .refunding), ("换货", .refunding), ("返修", .refunding)
@@ -38,8 +39,8 @@ enum JdPCList {
         for chunk in chunks {
             guard let orderNo = chunk.orderNo, !seen.contains(orderNo) else { continue }
             let text = HTMLTools.strip(chunk.body)
-            let status = statusIn(text)
-            let title = titleIn(html: chunk.body, text: text)
+            let status = statusIn(HTMLTools.strip(chunk.afterNo)) ?? statusIn(text)
+            let title = titleIn(html: chunk.body, text: HTMLTools.strip(chunk.afterNo))
             let amount = amountIn(text)
             let date = dateIn(text)
             // 三个关键字段都没有的块，多半是页面别处的「订单号」字样（比如帮助提示），丢掉
@@ -64,9 +65,10 @@ enum JdPCList {
         var seen = Set<String>()
         for chunk in splitByOrderNo(text) {
             guard let orderNo = chunk.orderNo, !seen.contains(orderNo) else { continue }
-            let status = statusIn(chunk.body)
-            let amount = amountIn(chunk.body)
-            let title = plainTitleIn(chunk.body, orderNo: orderNo)
+            let status = statusIn(chunk.afterNo) ?? statusIn(chunk.body)
+            var amount = amountIn(chunk.afterNo)
+            if amount.isEmpty { amount = amountIn(chunk.body) }
+            let title = plainTitleIn(chunk.afterNo.isEmpty ? chunk.body : chunk.afterNo, orderNo: orderNo)
             if title.isEmpty && status == nil && amount.isEmpty { continue }
             seen.insert(orderNo)
             rows.append(Row(
@@ -86,6 +88,10 @@ enum JdPCList {
     private struct Chunk {
         let orderNo: String?
         let body: String
+        /// 从这个订单号开始往后的内容。状态词/标题要优先在这里面找 ——
+        /// `body` 前面那 400 字是**上一单的尾巴和页面导航**，里面全是「待付款/已完成」这类 tab 文字，
+        /// 拿它判状态会把「请上门自提」误判成「待付款」（2026-11-19 实测）。
+        let afterNo: String
     }
 
     /// 以 `订单号：<8~25 位数字>` 为界把整页切开。
@@ -105,12 +111,13 @@ enum JdPCList {
             let end = idx + 1 < matches.count ? matches[idx + 1].range.location : ns.length
             guard end > start else { continue }
             var body = ns.substring(with: NSRange(location: start, length: end - start))
+            let afterNo = body
             // 往前带 400 字：日期、店铺名有时候在「订单号」前面
             let backStart = max(0, start - 400)
             if backStart < start {
                 body = ns.substring(with: NSRange(location: backStart, length: start - backStart)) + body
             }
-            chunks.append(Chunk(orderNo: orderNo, body: body))
+            chunks.append(Chunk(orderNo: orderNo, body: body, afterNo: afterNo))
         }
         return chunks
     }
@@ -156,21 +163,32 @@ enum JdPCList {
         return plainTitleIn(text, orderNo: "")
     }
 
-    /// 纯文本里的商品名：找第一行「像商品标题」的内容
+    /// 纯文本里的商品名：在候选行里挑**最长**的那条。
+    /// 之前是「第一行不吵的」，于是把页头「你好，请登录 免费注册」当成了商品名（2026-11-19 实测）；
+    /// 商品标题几乎总是这一块里最长的一行，而导航/按钮都很短。
     private static func plainTitleIn(_ text: String, orderNo: String) -> String {
-        let noise = ["订单号", "等待付款", "等待出库", "等待收货", "已完成", "已取消", "售后", "退款",
-                     "再次购买", "查看物流", "订单详情", "删除订单", "评价", "京东", "￥", "¥", "合计", "实付"]
-        for raw in text.split(separator: "\n") {
+        let noise = ["订单号", "等待付款", "待付款", "等待出库", "待发货", "等待收货", "待收货", "已完成",
+                     "已取消", "售后", "退款", "再次购买", "查看物流", "订单详情", "删除订单", "评价",
+                     "京东", "￥", "¥", "合计", "实付", "请登录", "免费注册", "桌面版", "购物车",
+                     "我的订单", "订单中心", "导出订单", "近3个月订单", "物流信息", "操作", "金额",
+                     "上一页", "下一页", "在线支付", "确认收货", "申请退款", "查看发票", "京ICP备",
+                     "Copyright", "营业执照", "网络文化经营", "增值电信"]
+        var best = ""
+        for (index, raw) in text.split(separator: "\n").enumerated() {
+            // 只看前 40 行：最后一块会一直伸到页脚，页脚那些「京公网安备…｜京ICP备…」又长又像标题
+            if index > 40 { break }
             var line = clean(String(raw))
             guard line.count >= 4 else { continue }
             if !orderNo.isEmpty { line = line.replacingOccurrences(of: orderNo, with: " ") }
             if noise.contains(where: { line.contains($0) }) { continue }
-            // 全是数字/符号的不要
+            if line.contains("|") { continue }
+            // 全是数字/符号的不要；日期、纯金额也排除
             let letters = line.filter { $0.isLetter || $0.isNumber }
             guard letters.count >= 3 else { continue }
-            return String(line.prefix(60))
+            if line.range(of: #"^\d{4}-\d{2}-\d{2}"#, options: .regularExpression) != nil { continue }
+            if line.count > best.count { best = line }
         }
-        return ""
+        return String(best.prefix(60))
     }
 
     private static func clean(_ text: String) -> String {
