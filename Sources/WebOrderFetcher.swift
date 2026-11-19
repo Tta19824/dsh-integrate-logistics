@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 import UIKit
 import WebKit
 
@@ -1196,10 +1196,34 @@ final class WebOrderFetcher: NSObject {
         }
         // 列表是 JS 渲染的，complete 之后还要给一点时间出 DOM
         try? await Task.sleep(nanoseconds: 900_000_000)
-        let js = "(function(){var e=document.querySelector('#orderList, .order-list, #order-list')||document.body;return e?e.innerText:''})()"
-        let text = (try? await wv.evaluateJavaScript(js)) as? String ?? ""
-        if text.isEmpty { return "ERR 空文档（state=\(state)）" }
-        return "200|" + text
+        // 正文 + 商品图一起取。电脑版没有解析出图片 URL 的话，订单卡片就是空白 ——
+        // 0.36.12 用户看到「京东的订单图片不见了」就是这么来的（电脑版顶替了带图的手机版）。
+        let js = """
+        (function(){
+          var e = document.querySelector('#orderList, .order-list, #order-list') || document.body;
+          var text = e ? e.innerText : '';
+          var imgs = [];
+          try {
+            var nodes = (e || document).querySelectorAll('img');
+            for (var i = 0; i < nodes.length; i++) {
+              var s = nodes[i].src || '';
+              if (s.indexOf('360buyimg.com') >= 0 && s.indexOf('icon') < 0 && s.indexOf('logo') < 0) {
+                imgs.push(s);
+              }
+              if (imgs.length > 60) break;
+            }
+          } catch (err) {}
+          return JSON.stringify({ t: text, i: imgs });
+        })()
+        """
+        let payload = (try? await wv.evaluateJavaScript(js)) as? String ?? ""
+        if payload.isEmpty { return "ERR 空文档（state=\(state)）" }
+        if let data = payload.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let text = obj["t"] as? String, !text.isEmpty {
+            return "200|" + payload
+        }
+        return "ERR 取不到正文（state=\(state)）"
     }
 
     private func shortURL(_ url: URL) -> String {

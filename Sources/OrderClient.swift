@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 
 struct FetchOutcome {
     var orders: [Order]
@@ -271,11 +271,20 @@ enum OrderClient {
         var pcSource = "HTML直取"
         var pcText = HTMLTools.strip(html)
         var renderNote = ""
+        // 桌面渲染会连商品图一起取回来（JS 返回 {"t": 正文, "i": 图片URL}）
+        var pcImgs: [String] = []
         if pcRows.isEmpty {
             // 直取没解析到：可能是 JS 渲染版或者被踢回登录页，让桌面槽渲染一遍再试
             let rendered = await WebOrderFetcher.shared.jdPCListRender(cookieHeader: cookie)
             if rendered.hasPrefix("200|") {
-                pcText = String(rendered.dropFirst(4))
+                let body = String(rendered.dropFirst(4))
+                if let data = body.data(using: .utf8),
+                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    pcText = (obj["t"] as? String) ?? ""
+                    pcImgs = (obj["i"] as? [String]) ?? []
+                } else {
+                    pcText = body
+                }
                 pcRows = JdPCList.parse(text: pcText)
                 pcSource = "桌面渲染"
             } else {
@@ -292,6 +301,7 @@ enum OrderClient {
         pcHeader += "\n【登录态】" + (loggedIn ? "页面像已登录" : "页面显示未登录（请登录/免费注册）")
         pcHeader += "\n【来源】\(pcSource)"
         if !renderNote.isEmpty { pcHeader += "\n" + renderNote }
+        if !pcImgs.isEmpty { pcHeader += "\n【图片 \(pcImgs.count) 张】" + String(pcImgs[0].prefix(120)) }
         if !pcText.isEmpty { pcHeader += "\n【正文 \(pcText.count) 字·开头 800】\n\(String(pcText.prefix(800)))" }
         if !pcRows.isEmpty {
             pcHeader += "\n【解析 \(pcRows.count) 条】"
@@ -302,7 +312,7 @@ enum OrderClient {
         // 登录页/错误页也会解析出「1 条」，那种页面的特征是正文很短、压根没有「订单号」。
         // 真订单页哪怕只有一单，正文里一定出现「订单号」这三个字。
         let pcTrustworthy = !pcRows.isEmpty && (pcRows.count >= 2 || pcText.contains("订单号"))
-        let orders = pcTrustworthy ? pcRows.map { row in
+        let orders = pcTrustworthy ? pcRows.enumerated().map { (index, row) -> Order in
             Order(id: Order.makeID(platform: .jd, orderNo: row.orderNo),
                   platform: .jd,
                   orderNo: row.orderNo,
@@ -314,6 +324,7 @@ enum OrderClient {
                   orderTime: row.dateText,
                   logistics: "",
                   pickupCode: "",
+                  imageURL: index < pcImgs.count ? pcImgs[index] : "",
                   updatedAt: Date())
         } : []
         var out = PcResult()
@@ -364,8 +375,38 @@ enum OrderClient {
                 authoritative: true
             )
         }
-        // 电脑版（thor/pin）不再放最前面：它有 1.5～2 秒的桌面渲染开销，手机版正常时用不上。
-        // 现在它在手机版那条路失败之后才跑（见下面的「快路三」）。
+        // 快路零：电脑版（thor/pin）当主路。
+        // 为什么换过来：手机版 `pt_key` 的会话寿命实测只有 1.5～3 小时（14:53→17:48、19:34→21:00），
+        // 而电脑版是另一套会话，扫码登一次能一直用；代价是它只列「近 3 个月」，对在途单够用。
+        // 命中就 1.2 秒返回，不再等症状已死的手机版页面白等 6～9 秒。
+        if let pcCookie = CookieStore.loadPc(for: .jd), pcCookie.contains("thor=") {
+            let pcStart = Date()
+            let pc = await jdPCRows(cookie: pcCookie)
+            dump.append(pc.dump)
+            diag.append(pc.diag)
+            if !pc.orders.isEmpty {
+                // 电脑版只列「近 3 个月」，库里的历史单（手机版以前抓到的）不要丢掉：
+                // 新结果打头，老单按订单号去重补在后面。手机版活着时它们会被重新刷成最新的。
+                let known = Set(pc.orders.map { $0.orderNo })
+                let history = OrderStore.shared.all()
+                    .filter { $0.platform == .jd && !known.contains($0.orderNo) }
+                let merged = pc.orders + history
+                let pcCost = String(format: "%.1f", Date().timeIntervalSince(started))
+                dump.append("【采用电脑版】\(pc.orders.count) 条（主路）＋历史 \(history.count) 条")
+                _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
+                return FetchOutcome(
+                    orders: merged,
+                    httpStatus: 200,
+                    byteCount: merged.count,
+                    rawFileURL: jdPCListFile(),
+                    note: "京东电脑版 \(pc.orders.count) 条（主路）" + (history.isEmpty ? "" : "＋历史 \(history.count) 条") + "· 用时 \(pcCost) 秒",
+                    payloadJSON: "",
+                    authoritative: true
+                )
+            }
+            diag.append("PC:\(String(format: "%.1f", Date().timeIntervalSince(pcStart)))s/0条")
+        }
+
         // 快路一：直开。只在这条存档「新鲜且上次验过」时才走 —— 0.36.3 实测：
         // 两小时前的 URL 重放回来是 `{"code":"0","message":"success"…}` 的空壳（没有 orderList），
         // 所以 URL 里的 x-api-eid-token/会话参数是**有时效**的，刷新 t 复活不了。
@@ -505,16 +546,8 @@ enum OrderClient {
         // 库里已经有京东订单时，这一趟的目标就变成「别把好数据弄坏」：
         // 0.36.12 实测过一次惨案 —— 手机版失败、电脑版只给 1 条且没有图，
         // 结果 10 条带图的列表被它顶掉了。所以电脑版只在库是空的时候才顶上来。
+        // 电脑版这一轮开头已经当主路试过了（拿不到才会走到这里），这里不再重复跑。
         let existing = OrderStore.shared.all().filter { $0.platform == .jd }
-        var pcOrders: [Order] = []
-        if let pcCookie = CookieStore.loadPc(for: .jd), pcCookie.contains("thor="), existing.isEmpty {
-            let t = Date()
-            let pc = await jdPCRows(cookie: pcCookie)
-            pcOrders = pc.orders
-            dump.append(pc.dump)
-            diag.append(pc.diag)
-            diag.append("PC:\(String(format: "%.1f", Date().timeIntervalSince(t)))s")
-        }
         let costSoFar = String(format: "%.1f", Date().timeIntervalSince(started))
         if !existing.isEmpty {
             // 库里有列表：不要再烧 14 秒慢路，也不要拿 1 条无图订单顶掉它。
@@ -531,20 +564,7 @@ enum OrderClient {
                 authoritative: false
             )
         }
-        // 库是空的、电脑版（thor/pin）看得见 —— 用电脑版的，别让用户空手。
-        if !pcOrders.isEmpty {
-            dump.append("【采用电脑版】库里没有京东订单，先用电脑版的 \(pcOrders.count) 条")
-            _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
-            return FetchOutcome(
-                orders: pcOrders,
-                httpStatus: 200,
-                byteCount: pcOrders.count,
-                rawFileURL: jdPCListFile(),
-                note: "京东电脑版 \(pcOrders.count) 条（手机版：\(failHint)）· 用时 \(costSoFar) 秒",
-                payloadJSON: "",
-                authoritative: true
-            )
-        }
+
         if maxResponses >= 6 {
             // 页面本身跑起来了（接口一堆），但就是没有订单接口 → 京东侧降级/会话被拦。
             // 这时再跑一遍慢路（同一个页面）只会多花 10 秒，直接报清楚。
