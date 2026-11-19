@@ -20,6 +20,8 @@ final class AppState: ObservableObject {
     @Published var jdBlocked: Bool = false
     /// 后台补京东取件码的时候不要并发开第二个 WebView
     private var jdPickupBusy = false
+    /// 「体检」按钮是否正在跑（防止连点开出两个 WebView）
+    @Published var probing = false
 
     init() {
         reload()
@@ -203,8 +205,24 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// 京东的取件码和物流摘要只能从订单详情页里读（列表接口里压根没有这两个字段）。
-    /// 刷新完在后台补最近一两单，用户点进「物流详情」时就已经有内容，不用再等页面加载。
+    /// 「体检」：开一次京东「我的」页，直接回答「这份登录态现在还认不认」。
+    /// 京东失效时刷新只会返回空列表，用户看不出是网络问题还是登录问题。
+    func probeJdSession() {
+        guard !probing else { return }
+        guard let cookie = CookieStore.load(for: .jd), !cookie.isEmpty else {
+            show("京东还没登录")
+            return
+        }
+        probing = true
+        Task {
+            let result = await WebOrderFetcher.shared.jdSessionProbe(cookieHeader: cookie)
+            probing = false
+            jdBlocked = result.contains("已失效") || result.contains("没结论")
+            show(result)
+        }
+    }
+
+    /// 京东的取件码和物流摘要只能从订单详情页里读（列表接口里压根没有这两个字段）。    /// 刷新完在后台补最近一两单，用户点进「物流详情」时就已经有内容，不用再等页面加载。
     private func enrichJdPickup(limit: Int = 2) {
         guard !isDisabled(.jd) else { return }
         guard !jdPickupBusy else { return }

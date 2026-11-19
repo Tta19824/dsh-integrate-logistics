@@ -450,6 +450,9 @@ enum OrderClient {
                 diag.append(tag + ":" + pick.reason)
             }
             dump.append("【\(tag)】\(pick.reason)\nURL: \(pageURL)\n页面正文开头: \(pick.textHead)\n接口一览: \(String(pick.captured.prefix(3000)))")
+            // 「我的」页已经拉了一堆接口却没有订单接口 = 会话被降级。
+            // 再开 trade 页只是再等 6 秒等同一件事，跳过（0.36.13 实测一次要 9 秒，其中一半是这个）。
+            if index == 0, pick.responses >= 6 { break }
         }
 
         let maxResponses = picks.map { $0.responses }.max() ?? 0

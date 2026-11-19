@@ -342,6 +342,12 @@ struct PlatformRow: View {
                         .controlSize(.small)
                         .tint(.red)
 
+                    // 绿点只代表「有 cookie」，不代表京东还认它。这个按钮直接问京东一次。
+                    Button("体检") { app.probeJdSession() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(app.probing)
+
                     Button("电脑版登录") { app.pcLoginPlatform = .jd }
                         .buttonStyle(.bordered)
                         .controlSize(.small)

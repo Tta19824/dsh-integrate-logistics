@@ -534,6 +534,39 @@ final class WebOrderFetcher: NSObject {
         var reused: Bool = false    // 这次没重新加载页面，直接复用了热页面上已有的响应
     }
 
+    /// 京东会话体检：只开一次「我的」页读正文，回答一个用户问不出来的问题 ——
+    /// 「现在这份 cookie 京东还认不认」。绿点只代表有 cookie，不代表有效。
+    func jdSessionProbe(cookieHeader: String) async -> String {
+        let wv = slots["jd-probe"] ?? makeWebView(slot: "jd-probe")
+        await prefillCookies(cookieHeader, platform: .jd, force: true)
+        guard let url = URL(string: "https://my.m.jd.com/index.html?sceneval=2") else {
+            return "体检失败：URL 拼错"
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        request.setValue(UserAgent.iOS, forHTTPHeaderField: "User-Agent")
+        _ = await wv.load(request)
+        let readJS = "(function(){var t=(document.body.innerText||'').replace(/\\s+/g,' ');return t.slice(0,300);})()"
+        var text = ""
+        for _ in 0..<25 {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            if let s = (try? await wv.evaluateJavaScript(readJS)) as? String, s.count > 20 {
+                text = s
+                break
+            }
+        }
+        if text.contains("账号信息获取失败") {
+            return "京东会话已失效（页面显示「账号信息获取失败」）→ 点「清空重登」"
+        }
+        if text.contains("请登录") || text.contains("免费注册") {
+            return "京东会话已失效（页面显示「请登录」）→ 点「清空重登」"
+        }
+        if text.isEmpty {
+            return "体检没结论：京东页面 5 秒内没渲染出文字（网络慢或被拦）"
+        }
+        return "京东会话有效：页面开头「\(String(text.prefix(40)))」"
+    }
+
     /// 让京东页面自己去请求订单列表（不点 tab、不等渲染、不滚动），
     /// 只等 __dshCap 里出现带 orderList 的响应，然后把那一条整条交回来。
     ///
