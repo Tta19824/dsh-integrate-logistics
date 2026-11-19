@@ -284,9 +284,13 @@ enum OrderClient {
         }
         // 电脑版这一路到底看见了什么，全部写进「调试 · 抓取文件 → 电脑版列表」那一份，
         // 免得又出现「只有一个数字、看不出问题在哪」的情况。
-        let keys = ["订单号", "请登录", "我的订单", "等待付款", "等待收货", "已完成", "验证"]
-        let counts = keys.map { $0 + "×" + String(JdDirect.occurrences(of: $0, in: html)) }.joined(separator: "·")
+        // 关键词要数**渲染后的正文**：HTML 里订单是 JS 渲染的，数 HTML 永远是 0（0.36.15 就栽在这）。
+        let keys = ["订单号", "请登录", "免费注册", "我的订单", "等待付款", "等待收货", "已完成", "验证"]
+        let counts = keys.map { $0 + "×" + String(JdDirect.occurrences(of: $0, in: pcText)) }.joined(separator: "·")
+        let loggedIn = !pcText.isEmpty && !pcText.contains("免费注册") && !pcText.contains("你好，请登录")
         var pcHeader = "【版本】\(Self.appVersion())\n【电脑版】HTML HTTP \(status) · \(html.count) 字 · \(counts)"
+        pcHeader += "\n【登录态】" + (loggedIn ? "页面像已登录" : "页面显示未登录（请登录/免费注册）")
+        pcHeader += "\n【来源】\(pcSource)"
         if !renderNote.isEmpty { pcHeader += "\n" + renderNote }
         if !pcText.isEmpty { pcHeader += "\n【正文 \(pcText.count) 字·开头 800】\n\(String(pcText.prefix(800)))" }
         if !pcRows.isEmpty {

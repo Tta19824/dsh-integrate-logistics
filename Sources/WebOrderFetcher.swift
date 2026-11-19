@@ -1072,7 +1072,19 @@ final class WebOrderFetcher: NSObject {
             guard parts.count == 2 else { continue }
             let name = String(parts[0]).trimmingCharacters(in: .whitespaces)
             let value = String(parts[1]).trimmingCharacters(in: .whitespaces)
-            guard !name.isEmpty, !existingNames.contains(name) else { continue }
+            guard !name.isEmpty else { continue }
+            if force {
+                // force 就是「以这份为准」：先删掉 WebView 里同名的旧 cookie，
+                // 否则残留的死会话（比如上一次登录留下的 thor）会盖住刚存进来的新凭证 ——
+                // 0.36.15 实测过：京东电脑版明明扫码登上了，渲染出来的页面还是「你好，请登录」。
+                for stale in existing where stale.name == name {
+                    await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                        store.delete(stale) { cont.resume() }
+                    }
+                }
+            } else if existingNames.contains(name) {
+                continue
+            }
             for domain in domains {
                 let props: [HTTPCookiePropertyKey: Any] = [
                     .name: name,
