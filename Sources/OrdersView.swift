@@ -41,11 +41,19 @@ struct OrdersView: View {
 
     private var activeOrders: [Order] {
         app.orders.filter { order in
-            if order.status == .paid || order.status == .shipped { return true }
-            // 兜底：状态词没认出来、但明显是「到了驿站等人取」的单子，也得留在列表里。
-            // 以前这里只放 待付款/待收货，京东写「请上门自提」时整条被藏掉（0.36.10 实测）。
-            if !order.pickupCode.isEmpty { return true }
             let raw = order.statusRaw
+            // 退款 / 退货 / 取消 / 关闭的单子一律不进这个列表。
+            // 0.36.11 加兜底时没排掉它们：一张已经退货的淘宝单因为还留着取件码，
+            // 又被「!pickupCode.isEmpty」捞回来了（2026-11-19 实测）。
+            if order.status == .cancelled || order.status == .refunding { return false }
+            if raw.contains("退款") || raw.contains("退货") || raw.contains("取消") || raw.contains("关闭") {
+                return false
+            }
+            if order.status == .paid || order.status == .shipped { return true }
+            // 兜底只对京东生效：状态词没认出来、但明显是「到了驿站等人取」的单子也得留着。
+            // 以前这里只放 待付款/待收货，京东写「请上门自提」时整条被藏掉（0.36.10 实测）。
+            guard order.platform == .jd else { return false }
+            if !order.pickupCode.isEmpty { return true }
             return raw.contains("自提") || raw.contains("取件") || raw.contains("到站") || raw.contains("投递")
         }
     }
@@ -282,6 +290,8 @@ struct LogisticsSheet: View {
     @State private var carrierLine = ""
     @State private var loading = true
     @State private var message = ""
+    /// 京东的取件码只写在订单详情页里（列表接口没有这个字段），读到就存库
+    @State private var pickup = ""
 
     @State private var mapHeight: CGFloat = 230
     @State private var traceExpanded = false
@@ -316,6 +326,12 @@ struct LogisticsSheet: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
+                        if !pickup.isEmpty {
+                            pickupRow
+                                .padding(.horizontal, 16)
+                                .padding(.top, 6)
+                        }
+
                         trackingRow
                             .padding(.horizontal, 16)
                             .padding(.top, 2)
@@ -433,6 +449,35 @@ struct LogisticsSheet: View {
         .accessibilityLabel("拖动调整地图大小")
     }
 
+    /// 取件码：驿站/自提单才有。点一下复制，去驿站直接念数字。
+    private var pickupRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "shippingbox.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(.orange)
+            Text("取件码")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(pickup)
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.orange)
+                .textSelection(.enabled)
+            Spacer(minLength: 8)
+            Button {
+                UIPasteboard.general.string = pickup
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
     private var trackingRow: some View {
         HStack(spacing: 8) {
             Text("快递单号")
@@ -470,6 +515,7 @@ struct LogisticsSheet: View {
     /// 京东：订单详情页里的物流轨迹
     private func loadJD() async {
         let cacheKey = "jd:\(order.orderNo)"
+        if !order.pickupCode.isEmpty { pickup = order.pickupCode }
         if let cached = TraceCache.shared.get(cacheKey) {
             events = cached.events
             tracking = cached.tracking
@@ -493,6 +539,16 @@ struct LogisticsSheet: View {
         events = parsed.events
         tracking = parsed.tracking
         carrierLine = parsed.carrier.isEmpty ? order.carrier : parsed.carrier
+        // 取件码只在这个页面里有：读到就显示 + 存库，列表卡片下次刷新也能直接带上
+        if pickup.isEmpty {
+            pickup = DetailParser.pickupCode(from: cap.text)
+        }
+        if pickup.isEmpty {
+            pickup = DetailParser.pickupCode(from: events.map(\.desc).joined(separator: "\n"))
+        }
+        if !pickup.isEmpty, pickup != order.pickupCode {
+            OrderStore.shared.setPickup(orderNo: order.orderNo, code: pickup)
+        }
         if events.isEmpty {
             // 还没发货：京东列表接口只给「正在出库 / 仓库处理中」这类摘要，
             // 拿摘要当一条进度，别让详情页空着。

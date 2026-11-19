@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 import UIKit
 import WebKit
 
@@ -39,6 +39,9 @@ final class WebOrderFetcher: NSObject {
     /// 按用途复用 WebView：拼多多列表、淘宝列表各自一个，刷新时两个平台可以并行跑，
     /// 也不会互相把对方的页面顶掉。
     private var slots: [String: WKWebView] = [:]
+    /// 最近一次把某个槽导航到新地址的时间：用于「刚打开过的页面直接复用」，
+    /// 别为了一次手动刷新把整页重新加载一遍（那是京东一次刷新 3 秒里的大头）。
+    private var loadedAt: [String: Date] = [:]
 
     /// 在页面里找 innerText 含指定文字、且**最短**的那个链接，返回它的 href。
     /// 订单卡片整体常常也被包在一个 <a> 里，取最短才能命中「查看物流」这种小链接。
@@ -537,7 +540,7 @@ final class WebOrderFetcher: NSObject {
     /// 比等整页渲染（9–10 秒）便宜得多。
     func jdOrderListFromPage(cookieHeader: String, urlString: String,
                              clickText: String = "全部订单", wait: Double = 6,
-                             deep: Bool = true) async -> JdPagePick {
+                             deep: Bool = true, reuseWithin: Double = 45) async -> JdPagePick {
         var pick = JdPagePick()
         pick.url = urlString
         guard let target = URL(string: urlString) else {
@@ -546,15 +549,6 @@ final class WebOrderFetcher: NSObject {
         }
         let wv = slots["list-jd"] ?? makeWebView(slot: "list-jd")
         await prefillCookies(cookieHeader, platform: .jd, force: true)
-        var request = URLRequest(url: target)
-        request.timeoutInterval = 20
-        request.setValue(UserAgent.iOS,
-                         forHTTPHeaderField: "User-Agent")
-        _ = await wv.load(request)
-
-        let started = Date()
-        let deadline = started.addingTimeInterval(wait)
-        var clicked = false
         let probe = "(function(){var a=window.__dshCap||[];for(var i=0;i<a.length;i++){if(String(a[i].b||'').indexOf('orderList')>=0)return '1';}return '0';})()"
         let countJS = "String((window.__dshCap||[]).length)"
         let take = #"""
@@ -571,6 +565,29 @@ final class WebOrderFetcher: NSObject {
           return JSON.stringify(out);
         })()
         """#
+        // 刚打开过的订单页（reuseWithin 秒内）直接复用已抓到的响应：整页重新加载
+        // 要等 SPA 自己把订单接口发出来，那 2 秒在「手点刷新」时纯属白花。
+        let warmHost = wv.url?.host ?? ""
+        if reuseWithin > 0, warmHost.contains("jd.com"),
+           Date().timeIntervalSince(loadedAt["list-jd"] ?? .distantPast) < reuseWithin {
+            let warm = await jdCapturedEntries(wv, js: take)
+            if !warm.isEmpty {
+                pick.entries = warm
+                pick.entry = warm.last ?? ""
+                pick.responses = warm.count
+                return pick
+            }
+        }
+        var request = URLRequest(url: target)
+        request.timeoutInterval = 20
+        request.setValue(UserAgent.iOS,
+                         forHTTPHeaderField: "User-Agent")
+        _ = await wv.load(request)
+        loadedAt["list-jd"] = Date()
+
+        let started = Date()
+        let deadline = started.addingTimeInterval(wait)
+        var clicked = false
         var hitAt: Date? = nil
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: 250_000_000)
@@ -578,12 +595,12 @@ final class WebOrderFetcher: NSObject {
                 hitAt = Date()
             }
             // 京东手机版一页 10 条，翻页/切 tab 会再发一条订单接口。
-            // 所以命中后再多等 0.9 秒，把所有命中的响应一起收走，而不是只拿最后一条。
-            if let h = hitAt, Date().timeIntervalSince(h) >= 0.9 { break }
+            // 命中后再多等 0.35 秒，把同时到达的响应一起收走（原来是 0.9 秒，纯等待）。
+            if let h = hitAt, Date().timeIntervalSince(h) >= 0.35 { break }
             let n = Int((try? await wv.evaluateJavaScript(countJS)) as? String ?? "0") ?? 0
             pick.responses = n
             // 首屏没自己拉订单，就点一次「全部订单」，再继续等
-            if !clicked, Date().timeIntervalSince(started) > 2.5 {
+            if !clicked, Date().timeIntervalSince(started) > 2.2 {
                 clicked = true
                 _ = try? await wv.evaluateJavaScript(clickTabJS([clickText]))
             }

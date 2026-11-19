@@ -18,6 +18,8 @@ final class AppState: ObservableObject {
     @Published var pcLoginPlatform: Platform?
     /// 京东上次刷新是否被风控挡了 —— 有它就说明那个绿点不可信
     @Published var jdBlocked: Bool = false
+    /// 后台补京东取件码的时候不要并发开第二个 WebView
+    private var jdPickupBusy = false
 
     init() {
         reload()
@@ -154,6 +156,7 @@ final class AppState: ObservableObject {
                 // 京东这条 note 里带「降级」就是被风控挡了：界面上的绿点不该继续说「已登录」
                 if platform == .jd {
                     jdBlocked = outcome.note.contains("降级") || outcome.note.contains("被风控")
+                    if !outcome.orders.isEmpty { enrichJdPickup() }
                 }
                 show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)")
             } catch {
@@ -166,6 +169,8 @@ final class AppState: ObservableObject {
     /// 淘宝列表接口只给一句摘要（"运输中预计明天送达"），卡片上想要拼多多那种最新轨迹。
     /// 列表出来之后在后台补抓最近几单的物流页，抓到就把最新一条写回库并刷新界面，不拖慢列表。
     private func enrichTaobaoTrace(limit: Int = 2) {
+        // 用户把淘宝的刷新关掉了，这个后台补抓也不该偷偷跑（会真的去打淘宝接口）
+        guard !isDisabled(.tb) else { return }
         guard let cookie = CookieStore.load(for: .tb) else { return }
         let targets = orders
             .filter { $0.platform == .tb && $0.status == .shipped }
@@ -194,6 +199,40 @@ final class AppState: ObservableObject {
                 }
                 self.traceInfo = OrderStore.shared.traceDebug()
                 self.enrichInfo = "补抓：\(no) → \(latest.desc.prefix(20))"
+            }
+        }
+    }
+
+    /// 京东的取件码和物流摘要只能从订单详情页里读（列表接口里压根没有这两个字段）。
+    /// 刷新完在后台补最近一两单，用户点进「物流详情」时就已经有内容，不用再等页面加载。
+    private func enrichJdPickup(limit: Int = 2) {
+        guard !isDisabled(.jd) else { return }
+        guard !jdPickupBusy else { return }
+        guard let cookie = CookieStore.load(for: .jd), !cookie.isEmpty else { return }
+        let targets = orders
+            .filter { $0.platform == .jd && $0.status == .shipped && $0.pickupCode.isEmpty }
+            .prefix(limit)
+            .map { $0.orderNo }
+        guard !targets.isEmpty else { return }
+        jdPickupBusy = true
+        Task { [weak self] in
+            defer { Task { @MainActor in self?.jdPickupBusy = false } }
+            for no in targets {
+                // 后台用单独的槽，别把用户正在看的详情页顶掉
+                guard let cap = try? await OrderClient.captureJdDetail(
+                    orderNo: no, cookieHeader: cookie, slot: "detail-jd-bg", seconds: 7) else { continue }
+                let code = DetailParser.pickupCode(from: cap.text)
+                if !code.isEmpty {
+                    OrderStore.shared.setPickup(orderNo: no, code: code)
+                }
+                let parsed = TaobaoJdParser.parseJdLogistics(text: cap.text, payloadJSON: cap.payloadJSON)
+                if let latest = parsed.events.first, !latest.desc.isEmpty {
+                    TraceCache.shared.put("jd:\(no)", TraceCache.Item(
+                        at: Date(), events: parsed.events, tracking: parsed.tracking, carrier: parsed.carrier))
+                    OrderStore.shared.setTrace(orderNo: no, text: latest.desc)
+                }
+                guard let self else { return }
+                await MainActor.run { self.reload() }
             }
         }
     }
@@ -244,6 +283,7 @@ final class AppState: ObservableObject {
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "last_refresh_at")
             if !quiet { show(lines.joined(separator: "；")) }
             enrichTaobaoTrace()
+            enrichJdPickup()
             BackgroundRefresh.schedule()
             let changes = BackgroundRefresh.diff(orders: orders)
             if !quiet { BackgroundRefresh.post(changes) }

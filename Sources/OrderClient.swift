@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 
 struct FetchOutcome {
     var orders: [Order]
@@ -127,7 +127,8 @@ enum OrderClient {
     }
 
     /// 淘宝订单详情页的页面文字（排查快递公司与轨迹用）
-    static func captureJdDetail(orderNo: String, cookieHeader: String) async throws -> WebOrderFetcher.Capture {
+    static func captureJdDetail(orderNo: String, cookieHeader: String,
+                                slot: String = "detail-jd", seconds: Double = 9) async throws -> WebOrderFetcher.Capture {
         let urls = [
             "https://trade.m.jd.com/order/n_detail_jdm.shtml?deal_id=\(orderNo)",
             "https://order.m.jd.com/orderDetail?orderId=\(orderNo)"
@@ -140,11 +141,14 @@ enum OrderClient {
                 platform: .jd,
                 urls: [url],
                 cookieHeader: cookieHeader,
-                seconds: 12,
+                seconds: seconds,
                 clickTabs: false,
                 scroll: true,
-                readyJS: "(/运输中|已签收|派送中|已送达|运单号|承运人/.test(document.body.innerText)) ? '1' : '0'",
-                slot: "detail-jd",
+                // 以前只认「运输中/已签收/运单号」这些快递词，自提单页面上写的是
+                // 「待取件 / 取件码 15-6-2127 / 投递完成，请上门提货」——一个都不匹配，
+                // 于是一定要等满 21 秒的轮询上限，这才是「点进物流详情等很久」的真正原因。
+                readyJS: "(/运输中|已签收|派送中|已送达|运单号|承运人|取件码|待取件|提货|自提|投递/.test(document.body.innerText)) ? '1' : '0'",
+                slot: slot,
                 referer: "https://my.m.jd.com/"
             ) else { continue }
             // 京东风控页：「验证一下，购物无忧」，只有几十个字，换下一个地址
@@ -153,7 +157,8 @@ enum OrderClient {
             let blocked = (cap.text.count < 300 && (cap.text.contains("快速验证") || cap.text.contains("验证一下"))) || isJSONError
             if blocked { continue }
             if best == nil || cap.text.count > (best?.text.count ?? 0) { best = cap }
-            if cap.text.count > 600 { break }
+            // 已经拿到带物流/取件信息的页面就别再试第二个地址（每个地址都要几秒）
+            if cap.text.count > 600, index == 0 { break }
             _ = index
         }
         guard let result = best else { throw FetchError.note("京东详情页被风控拦了（出现验证页），先手动打开一次京东再试") }
@@ -246,15 +251,73 @@ enum OrderClient {
     /// 电脑版订单页解析出的纯文本（排障时看这个就知道解析器哪儿不认）
     static func jdPCListFile() -> URL { rawDirectory().appendingPathComponent("jd_pc_list.txt") }
 
+    /// 电脑版（thor/pin）订单页：先用 URLSession 直取 HTML，解析不到再让桌面槽渲染一遍。
+    /// 只用 thor/pin 那套**独立会话**（桌面 UA），手机版 pt_key 被风控时它往往还活着。
+    /// 结果不可信（落到登录页/错误页）就返回空数组，并在「电脑版列表」里写清看见了什么。
+    private struct PcResult {
+        var orders: [Order] = []
+        var dump = ""
+        var diag = ""
+    }
+
+    private static func jdPCRows(cookie: String) async -> PcResult {
+        let (status, html) = await JdDirect.fetchOrderListHTML(cookie: cookie)
+        var pcRows = JdPCList.parse(html: html)
+        var pcSource = "HTML直取"
+        var pcText = HTMLTools.strip(html)
+        var renderNote = ""
+        if pcRows.isEmpty {
+            // 直取没解析到：可能是 JS 渲染版或者被踢回登录页，让桌面槽渲染一遍再试
+            let rendered = await WebOrderFetcher.shared.jdPCListRender(cookieHeader: cookie)
+            if rendered.hasPrefix("200|") {
+                pcText = String(rendered.dropFirst(4))
+                pcRows = JdPCList.parse(text: pcText)
+                pcSource = "桌面渲染"
+            } else {
+                renderNote = "【渲染失败】\(rendered)"
+            }
+        }
+        // 电脑版这一路到底看见了什么，全部写进「调试 · 抓取文件 → 电脑版列表」那一份，
+        // 免得又出现「只有一个数字、看不出问题在哪」的情况。
+        let keys = ["订单号", "请登录", "我的订单", "等待付款", "等待收货", "已完成", "验证"]
+        let counts = keys.map { $0 + "×" + String(JdDirect.occurrences(of: $0, in: html)) }.joined(separator: "·")
+        var pcHeader = "【版本】\(Self.appVersion())\n【电脑版】HTML HTTP \(status) · \(html.count) 字 · \(counts)"
+        if !renderNote.isEmpty { pcHeader += "\n" + renderNote }
+        if !pcText.isEmpty { pcHeader += "\n【正文 \(pcText.count) 字·开头 800】\n\(String(pcText.prefix(800)))" }
+        if !pcRows.isEmpty {
+            pcHeader += "\n【解析 \(pcRows.count) 条】"
+                + pcRows.map { "\($0.orderNo)/\($0.statusRaw)/\(String($0.title.prefix(16)))" }.joined(separator: " ｜ ")
+        }
+        try? (pcHeader + "\n\n---- 正文全文 ----\n" + pcText)
+            .data(using: .utf8)?.write(to: jdPCListFile(), options: .atomic)
+        // 登录页/错误页也会解析出「1 条」，那种页面的特征是正文很短、压根没有「订单号」。
+        // 真订单页哪怕只有一单，正文里一定出现「订单号」这三个字。
+        let pcTrustworthy = !pcRows.isEmpty && (pcRows.count >= 2 || pcText.contains("订单号"))
+        let orders = pcTrustworthy ? pcRows.map { row in
+            Order(id: Order.makeID(platform: .jd, orderNo: row.orderNo),
+                  platform: .jd,
+                  orderNo: row.orderNo,
+                  title: row.title,
+                  shopName: "京东",
+                  amount: row.amount,
+                  status: row.status,
+                  statusRaw: row.statusRaw.isEmpty ? row.status.label : row.statusRaw,
+                  orderTime: row.dateText,
+                  logistics: "",
+                  pickupCode: "",
+                  updatedAt: Date())
+        } : []
+        dump.append("【PC·\(pcSource)】" + pcHeader
+                    + (orders.isEmpty ? "\n【未采用】解析结果不可信" : "\n【备用】\(orders.count) 条"))
+        diag.append("PC:HTTP\(status)/\(html.count)字/\(pcRows.count)条" + (orders.isEmpty ? "(未采用)" : "(备用)"))
+        return orders
+    }
+
     private static func fetchJd(cookie: String) async throws -> FetchOutcome {
         guard !cookie.isEmpty else { throw FetchError.noCookie }
         let started = Date()
         var diag: [String] = []
         var dump: [String] = []
-        /// 电脑版（thor/pin）看到的订单。**只当补充，不当唯一结果** ——
-        /// 电脑版列表页默认只显示某几个 tab / 近 3 个月，条数常常比手机版少；
-        /// 0.36.10 就是拿它 early-return，把手机版 10 条顶成 1 条（2026-11-19 实测）。
-        var pcOrders: [Order] = []
         // 排查风控时最先要看的就是「这次以什么身份去的」，所以把 UA 和凭证时间写在最前面
         var stampText = "未知"
         if let at = CookieStore.savedAt(for: .jd) {
@@ -263,61 +326,8 @@ enum OrderClient {
             stampText = formatter.string(from: at)
         }
         dump.append("【版本】\(Self.appVersion())\n【身份】\(UserAgent.iOS)\n【凭证】\(cookie.count) 字节·存于 \(stampText)")
-        // 快路零：电脑版订单页。用的是 thor/pin 那套**独立会话**（桌面 UA），
-        // 手机版 pt_key 被风控时它往往还活着；而且这页是服务端渲染，一份 HTML 就是全部订单。
-        if let pc = CookieStore.loadPc(for: .jd), pc.contains("thor=") {
-            let (status, html) = await JdDirect.fetchOrderListHTML(cookie: pc)
-            var pcRows = JdPCList.parse(html: html)
-            var pcSource = "HTML直取"
-            var pcText = HTMLTools.strip(html)
-            var renderNote = ""
-            if pcRows.isEmpty {
-                // 直取没解析到：可能是 JS 渲染版或者被踢回登录页，让桌面槽渲染一遍再试
-                let rendered = await WebOrderFetcher.shared.jdPCListRender(cookieHeader: pc)
-                if rendered.hasPrefix("200|") {
-                    pcText = String(rendered.dropFirst(4))
-                    pcRows = JdPCList.parse(text: pcText)
-                    pcSource = "桌面渲染"
-                } else {
-                    renderNote = "【渲染失败】\(rendered)"
-                }
-            }
-            // 电脑版这一路到底看见了什么，全部写进「调试 · 抓取文件 → 电脑版列表」那一份，
-            // 免得又出现「只有一个数字、看不出问题在哪」的情况。
-            let keys = ["订单号", "请登录", "我的订单", "等待付款", "等待收货", "已完成", "验证"]
-            let counts = keys.map { $0 + "×" + String(JdDirect.occurrences(of: $0, in: html)) }.joined(separator: "·")
-            var pcHeader = "【版本】\(Self.appVersion())\n【电脑版】HTML HTTP \(status) · \(html.count) 字 · \(counts)"
-            if !renderNote.isEmpty { pcHeader += "\n" + renderNote }
-            if !pcText.isEmpty { pcHeader += "\n【正文 \(pcText.count) 字·开头 800】\n\(String(pcText.prefix(800)))" }
-            if !pcRows.isEmpty {
-                pcHeader += "\n【解析 \(pcRows.count) 条】"
-                    + pcRows.map { "\($0.orderNo)/\($0.statusRaw)/\(String($0.title.prefix(16)))" }.joined(separator: " ｜ ")
-            }
-            try? (pcHeader + "\n\n---- 正文全文 ----\n" + pcText)
-                .data(using: .utf8)?.write(to: jdPCListFile(), options: .atomic)
-            // 登录页/错误页也会解析出「1 条」，那种页面的特征是正文很短、压根没有「订单号」。
-            // 真订单页哪怕只有一单，正文里一定出现「订单号」这三个字。
-            let pcTrustworthy = !pcRows.isEmpty && (pcRows.count >= 2 || pcText.contains("订单号"))
-            if pcTrustworthy {
-                pcOrders = pcRows.map { row in
-                    Order(id: Order.makeID(platform: .jd, orderNo: row.orderNo),
-                          platform: .jd,
-                          orderNo: row.orderNo,
-                          title: row.title,
-                          shopName: "京东",
-                          amount: row.amount,
-                          status: row.status,
-                          statusRaw: row.statusRaw.isEmpty ? row.status.label : row.statusRaw,
-                          orderTime: row.dateText,
-                          logistics: "",
-                          pickupCode: "",
-                          updatedAt: Date())
-                }
-            }
-            dump.append("【PC·\(pcSource)】" + pcHeader
-                        + (pcOrders.isEmpty ? "\n【未采用】解析结果不可信" : "\n【暂存】\(pcOrders.count) 条，等手机版结果一起合并"))
-            diag.append("PC:HTTP\(status)/\(html.count)字/\(pcRows.count)条" + (pcOrders.isEmpty ? "(未采用)" : "(并入口径)"))
-        }
+        // 电脑版（thor/pin）不再放最前面：它有 1.5～2 秒的桌面渲染开销，手机版正常时用不上。
+        // 现在它在手机版那条路失败之后才跑（见下面的「快路三」）。
         // 快路一：直开。只在这条存档「新鲜且上次验过」时才走 —— 0.36.3 实测：
         // 两小时前的 URL 重放回来是 `{"code":"0","message":"success"…}` 的空壳（没有 orderList），
         // 所以 URL 里的 x-api-eid-token/会话参数是**有时效**的，刷新 t 复活不了。
@@ -365,7 +375,12 @@ enum OrderClient {
                     // 翻页要拿抓包里的原始 URL（里面有 body 的 JSON）。0.36.10 之前这条 URL
                     // 在钩子里被截到 400 字，改 page 必然失败，而失败是**静默**的 —— 所以写清楚。
                     let last = used.last ?? ""
-                    if let base = JdDirect.url(ofEntry: last) {
+                    // 这个账号手机版就一页时，每次刷新都为第 2 页白花 0.7 秒。
+                    // 半小时内已经问过「没有第 2 页」就直接跳过；真拿到第 2 页会清掉记号。
+                    let noPage2At = UserDefaults.standard.double(forKey: "jd_no_page2_at")
+                    if Date().timeIntervalSince1970 - noPage2At < 1800 {
+                        pageNote += " 第2页:半小时内已知没有(跳过)"
+                    } else if let base = JdDirect.url(ofEntry: last) {
                         if JdDirect.urlReplacingPage(base, page: 2) != nil {
                             let hdrs = ["content-type": "application/json;charset=UTF-8",
                                         "x-rp-client": "h5_2.6.0",
@@ -384,6 +399,10 @@ enum OrderClient {
                                 let body = String(raw.dropFirst(4))
                                 guard body.contains("orderList") else {
                                     pageNote += " 第\(page)页:无orderList(\(body.count)字)"
+                                    if page == 2 {
+                                        UserDefaults.standard.set(Date().timeIntervalSince1970,
+                                                                  forKey: "jd_no_page2_at")
+                                    }
                                     break
                                 }
                                 let more = TaobaoJdParser.parse(platform: .jd, text: "",
@@ -391,6 +410,8 @@ enum OrderClient {
                                 let fresh = more.filter { o in !allOrders.contains { $0.orderNo == o.orderNo } }
                                 pageNote += " 第\(page)页:+\(fresh.count)"
                                 allOrders += fresh
+                                // 第 2 页真拿到东西了：把「已知没有」的记号清掉
+                                UserDefaults.standard.removeObject(forKey: "jd_no_page2_at")
                                 if fresh.isEmpty { break }
                             }
                         } else {
@@ -407,17 +428,6 @@ enum OrderClient {
                 if !allOrders.isEmpty {
                     JdFast.save(fromPayload: wrapped)
                     JdFast.markHit(true)
-                    // 电脑版看到但手机版这一页没有的单子，补进来（电脑版不顶掉手机版）
-                    var merged = allOrders
-                    if !pcOrders.isEmpty {
-                        let have = Set(merged.map { $0.orderNo })
-                        let extra = pcOrders.filter { !have.contains($0.orderNo) }
-                        if !extra.isEmpty {
-                            merged += extra
-                            pageNote += " 并入电脑版\(extra.count)"
-                        }
-                    }
-                    allOrders = merged
                     let cost = String(format: "%.1f", Date().timeIntervalSince(started))
                     _ = write(wrapped, to: payloadFile(for: .jd))
                     _ = write(dump.joined(separator: "\n\n"), to: jdInPageFile())
@@ -439,7 +449,18 @@ enum OrderClient {
         }
 
         let maxResponses = picks.map { $0.responses }.max() ?? 0
-        // 手机版这条路没出订单，但电脑版（thor/pin）看得见 —— 用电脑版的，别让用户空手。
+        // 快路三：电脑版兜底。手机版这条路没出结果时才跑 —— 桌面渲染要 1.5～2 秒，
+        // 手机版正常时不该为它买单（0.36.11 实测：先跑电脑版，5.5 秒里有 2 秒是白花的）。
+        var pcOrders: [Order] = []
+        if let pcCookie = CookieStore.loadPc(for: .jd), pcCookie.contains("thor=") {
+            let t = Date()
+            let pc = await jdPCRows(cookie: pcCookie)
+            pcOrders = pc.orders
+            dump.append(pc.dump)
+            diag.append(pc.diag)
+            diag.append("PC:\(String(format: "%.1f", Date().timeIntervalSince(t)))s")
+        }
+        // 手机版没出订单、但电脑版（thor/pin）看得见 —— 用电脑版的，别让用户空手。
         if !pcOrders.isEmpty {
             let cost = String(format: "%.1f", Date().timeIntervalSince(started))
             dump.append("【采用电脑版】手机版无结果，电脑版 \(pcOrders.count) 条")
