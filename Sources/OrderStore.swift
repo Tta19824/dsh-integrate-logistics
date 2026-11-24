@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 import SQLite3
 
 private let SQLITE_TRANSIENT = unsafeBitCast(OpaquePointer(bitPattern: -1), to: sqlite3_destructor_type.self)
@@ -48,6 +48,7 @@ final class OrderStore {
         sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN carrier TEXT;", nil, nil, nil)
         sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS trace_summary (order_no TEXT PRIMARY KEY, text TEXT, updated REAL);", nil, nil, nil)
         sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS pickup_cache (order_no TEXT PRIMARY KEY, code TEXT, updated REAL);", nil, nil, nil)
+        sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS image_cache (order_no TEXT PRIMARY KEY, url TEXT, updated REAL);", nil, nil, nil)
         sqlite3_exec(db, "DELETE FROM trace_summary WHERE order_no IS NULL OR order_no = '' OR text IS NULL OR text = '';", nil, nil, nil)
         if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
             NSLog("[store] create table failed: \(String(cString: sqlite3_errmsg(db)))")
@@ -74,6 +75,11 @@ final class OrderStore {
                 UPDATE orders SET pickup_code = (SELECT code FROM pickup_cache p WHERE p.order_no = orders.order_no)
                 WHERE (pickup_code IS NULL OR pickup_code = '')
                   AND EXISTS (SELECT 1 FROM pickup_cache p WHERE p.order_no = orders.order_no);
+                """, nil, nil, nil)
+            sqlite3_exec(db, """
+                UPDATE orders SET image_url = (SELECT url FROM image_cache i WHERE i.order_no = orders.order_no)
+                WHERE (image_url IS NULL OR image_url = '')
+                  AND EXISTS (SELECT 1 FROM image_cache i WHERE i.order_no = orders.order_no);
                 """, nil, nil, nil)
         }
     }
@@ -137,6 +143,30 @@ final class OrderStore {
         }
     }
 
+    /// 商品图：京东电脑版列表是懒加载，抓不到就留空；详情页里那张是最稳的。
+    /// 刷新会整平台重写 orders，所以同时写进 image_cache 表，下次建行时贴回去。
+    func setImage(orderNo: String, url: String) {
+        guard !url.isEmpty else { return }
+        queue.sync {
+            guard let db else { return }
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "UPDATE orders SET image_url = ? WHERE order_no = ?;", -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, url, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, orderNo, -1, SQLITE_TRANSIENT)
+                sqlite3_step(stmt)
+            }
+            sqlite3_finalize(stmt)
+            var cstmt: OpaquePointer?
+            let csql = "INSERT INTO image_cache (order_no, url, updated) VALUES (?, ?, ?) ON CONFLICT(order_no) DO UPDATE SET url = excluded.url, updated = excluded.updated;"
+            if sqlite3_prepare_v2(db, csql, -1, &cstmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(cstmt, 1, orderNo, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(cstmt, 2, url, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_double(cstmt, 3, Date().timeIntervalSince1970)
+                sqlite3_step(cstmt)
+            }
+            sqlite3_finalize(cstmt)
+        }
+    }
     func setTrace(orderNo: String, text value: String) {
         queue.sync {
             guard let db else { return }

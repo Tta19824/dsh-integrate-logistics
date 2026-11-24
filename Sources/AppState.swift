@@ -253,6 +253,9 @@ final class AppState: ObservableObject {
                 let head = "【版本】\(OrderClient.appVersion())\n【详情URL】\(detail.url)\n【字数】\(detail.text.count)\n\n"
                 try? (head + detail.text).data(using: .utf8)?
                     .write(to: OrderClient.jdDetailFile(for: .jd), options: .atomic)
+                if !detail.image.isEmpty {
+                    OrderStore.shared.setImage(orderNo: no, url: detail.image)
+                }
                 let parsed = JdPCDetail.parse(detail.text)
                 if !parsed.pickupCode.isEmpty {
                     OrderStore.shared.setPickup(orderNo: no, code: parsed.pickupCode)

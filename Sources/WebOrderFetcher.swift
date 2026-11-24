@@ -1058,8 +1058,12 @@ final class WebOrderFetcher: NSObject {
     /// （0.36.20 实测：`finalURL` 直接落成 `order.jd.com/center/list.action`，所以取件码永远读不到）。
     /// 所以这条路只能：打开订单列表 → 找到这张卡里的「订单详情」→ 点它 → 等跳转 → 读正文。
     /// 返回 `200|<最终URL>|<正文>` 或 `ERR …`。
+    /// 最近一次进到详情页时，页面上那张商品主图（京东列表页是懒加载，这里最稳）
+    private(set) var lastDetailImage = ""
+
     func jdPCDetailByClick(orderNo: String, cookieHeader: String,
                            slot: String = "detail-jd-bg", wait: Double = 16) async -> String {
+        lastDetailImage = ""
         guard let target = URL(string: "https://order.jd.com/center/list.action") else { return "ERR URL" }
         let wv: WKWebView
         if let exist = slots[slot], exist.url?.host?.contains("order.jd.com") == true {
@@ -1098,6 +1102,7 @@ final class WebOrderFetcher: NSObject {
                     let later = (try? await wv.evaluateJavaScript("document.body ? document.body.innerText : ''")) as? String ?? ""
                     if later.count > best.count { best = later }
                 }
+                lastDetailImage = (try? await wv.evaluateJavaScript(Self.jdDetailImageJS)) as? String ?? ""
                 return "200|\(lastHref)|\(best)"
             }
             // 有时页面把详情链接（带 PassKey）直接渲染在 DOM 里，只是没被点到。
@@ -1130,6 +1135,24 @@ final class WebOrderFetcher: NSObject {
         return "ERR 没跳进详情页（正文 \(lastText.count) 字，当前 \(lastHref)）"
     }
 
+    /// 详情页上的商品主图：取第一张 360buyimg 且宽度够大的，跳过图标/logo/占位。
+    private static let jdDetailImageJS = #"""
+    (function(){
+      var imgs = document.querySelectorAll('img');
+      var best = '', bestW = 0;
+      for (var i = 0; i < imgs.length; i++) {
+        var im = imgs[i];
+        var s = im.currentSrc || im.getAttribute('data-lazy-img') || im.getAttribute('data-src') || im.getAttribute('src') || '';
+        if (!s || s.indexOf('360buyimg.com') < 0) continue;
+        var l = s.toLowerCase();
+        if (l.indexOf('icon') >= 0 || l.indexOf('logo') >= 0 || l.indexOf('blank') >= 0 || l.indexOf('sprite') >= 0) continue;
+        var w = im.naturalWidth || im.width || 0;
+        if (w < 60) continue;
+        if (w > bestW) { bestW = w; best = s; }
+      }
+      return best;
+    })()
+    """#
     /// 在渲染后的 DOM 里找「带 PassKey 的详情链接」。
     /// 详情页的 PassKey 是列表页 JS 生成的，只存在于渲染后的 DOM 里，不在 HTTP 返回的 HTML 里。
     private static let jdPassKeyScanJS = #"""

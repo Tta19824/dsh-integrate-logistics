@@ -326,12 +326,6 @@ struct LogisticsSheet: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        if !pickup.isEmpty {
-                            pickupRow
-                                .padding(.horizontal, 16)
-                                .padding(.top, 6)
-                        }
-
                         trackingRow
                             .padding(.horizontal, 16)
                             .padding(.top, 2)
@@ -450,39 +444,21 @@ struct LogisticsSheet: View {
     }
 
     /// 取件码：驿站/自提单才有。点一下复制，去驿站直接念数字。
-    private var pickupRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "shippingbox.fill")
-                .font(.system(size: 13))
-                .foregroundStyle(.orange)
-            Text("取件码")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(pickup)
-                .font(.system(size: 20, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.orange)
-                .textSelection(.enabled)
-            Spacer(minLength: 8)
-            Button {
-                UIPasteboard.general.string = pickup
-            } label: {
-                Image(systemName: "doc.on.doc")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-    }
 
     private var trackingRow: some View {
         HStack(spacing: 8) {
-            Text("快递单号")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if !carrierLine.isEmpty {
+                Text(carrierLine)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.primary)
+                Text("·")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            } else {
+                Text("快递单号")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Text(tracking.isEmpty ? "暂未获取" : tracking)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(tracking.isEmpty ? .secondary : .primary)
@@ -554,16 +530,23 @@ struct LogisticsSheet: View {
             loading = false
             return
         }
+        // 详情页版式固定（状态一行、时间一行、描述若干行），先按 JdPCDetail 解析；
+        // 老的那套「淘宝式」文本解析只作兜底，免得两边都空。
+        let jdParsed = JdPCDetail.parse(capText)
         let parsed = TaobaoJdParser.parseJdLogistics(text: capText, payloadJSON: "")
-        events = parsed.events
-        tracking = parsed.tracking
-        carrierLine = parsed.carrier.isEmpty ? order.carrier : parsed.carrier
+        events = jdParsed.events.isEmpty ? parsed.events : jdParsed.events
+        tracking = jdParsed.trackingNo.isEmpty ? parsed.tracking : jdParsed.trackingNo
+        carrierLine = jdParsed.carrier.isEmpty
+            ? (parsed.carrier.isEmpty ? order.carrier : parsed.carrier)
+            : jdParsed.carrier
         // 取件码只在这个页面里有：读到就显示 + 存库，列表卡片下次刷新也能直接带上
-        if pickup.isEmpty {
-            pickup = DetailParser.pickupCode(from: capText)
-        }
+        if pickup.isEmpty { pickup = jdParsed.pickupCode }
+        if pickup.isEmpty { pickup = DetailParser.pickupCode(from: capText) }
         if pickup.isEmpty {
             pickup = DetailParser.pickupCode(from: events.map(\.desc).joined(separator: "\n"))
+        }
+        if order.imageURL.isEmpty, !detail.image.isEmpty {
+            OrderStore.shared.setImage(orderNo: order.orderNo, url: detail.image)
         }
         if !pickup.isEmpty, pickup != order.pickupCode {
             OrderStore.shared.setPickup(orderNo: order.orderNo, code: pickup)

@@ -179,9 +179,9 @@ enum OrderClient {
     }
 
     /// 京东电脑版详情入口：先「在列表里点开订单详情」（`PassKey` 只能这样拿到），
-    /// 失败再退回拼 URL 的老办法。返回（最终 URL，正文）。
+    /// 失败再退回拼 URL 的老办法。返回（最终 URL，正文，商品主图）。
     static func jdPCDetail(orderNo: String, cookieHeader: String,
-                           slot: String = "detail-jd", wait: Double = 16) async -> (url: String, text: String)? {
+                           slot: String = "detail-jd", wait: Double = 16) async -> (url: String, text: String, image: String)? {
         let clicked = await WebOrderFetcher.shared.jdPCDetailByClick(
             orderNo: orderNo, cookieHeader: cookieHeader, slot: "\(slot)-click", wait: wait)
         if clicked.hasPrefix("200|") {
@@ -189,13 +189,13 @@ enum OrderClient {
             if parts.count == 3 {
                 let url = String(parts[1])
                 if url.contains("PassKey") { JdPCLinks.save([orderNo: url]) }
-                return (url, String(parts[2]))
+                return (url, String(parts[2]), WebOrderFetcher.shared.lastDetailImage)
             }
         }
         guard let cap = try? await captureJdDetail(orderNo: orderNo, cookieHeader: cookieHeader,
                                                    slot: slot, seconds: 10) else { return nil }
         if cap.finalURL.contains("PassKey") { JdPCLinks.save([orderNo: cap.finalURL]) }
-        return (cap.finalURL, cap.text)
+        return (cap.finalURL, cap.text, "")
     }
     static func jdDetailFile(for platform: Platform) -> URL {
         rawDirectory().appendingPathComponent("jd_detail_\(platform.rawValue).txt")
