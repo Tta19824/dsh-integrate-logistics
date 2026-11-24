@@ -1081,6 +1081,7 @@ final class WebOrderFetcher: NSObject {
         let started = Date()
         var clicked = false
         var triedLink = false
+        var triedPassKey = false
         var lastHref = ""
         var lastText = ""
         while Date().timeIntervalSince(started) < wait {
@@ -1099,6 +1100,23 @@ final class WebOrderFetcher: NSObject {
                 }
                 return "200|\(lastHref)|\(best)"
             }
+            // 有时页面把详情链接（带 PassKey）直接渲染在 DOM 里，只是没被点到。
+            // 先扫一遍外链，命中就直接打开 —— 这条最省事也最稳。
+            if !triedPassKey, Date().timeIntervalSince(started) > 1.6 {
+                triedPassKey = true
+                if let raw = (try? await wv.evaluateJavaScript(Self.jdPassKeyScanJS)) as? String,
+                   let data = raw.data(using: .utf8),
+                   let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: String]] {
+                    let hit = arr.first { ($0["no"] ?? "") == orderNo } ?? (arr.count == 1 ? arr[0] : nil)
+                    if let u = hit?["url"], let detailURL = URL(string: u) {
+                        OrderClient.JdPCLinks.save([orderNo: u])
+                        var req2 = URLRequest(url: detailURL)
+                        req2.setValue(UserAgent.macOS, forHTTPHeaderField: "User-Agent")
+                        req2.setValue("https://order.jd.com/center/list.action", forHTTPHeaderField: "Referer")
+                        _ = await wv.load(req2)
+                    }
+                }
+            }
             if !clicked {
                 let ok = (try? await wv.evaluateJavaScript(Self.jdDetailClickJS(orderNo: orderNo))) as? String ?? "0"
                 clicked = ok == "1"
@@ -1112,6 +1130,23 @@ final class WebOrderFetcher: NSObject {
         return "ERR 没跳进详情页（正文 \(lastText.count) 字，当前 \(lastHref)）"
     }
 
+    /// 在渲染后的 DOM 里找「带 PassKey 的详情链接」。
+    /// 详情页的 PassKey 是列表页 JS 生成的，只存在于渲染后的 DOM 里，不在 HTTP 返回的 HTML 里。
+    private static let jdPassKeyScanJS = #"""
+    (function(){
+      var html = document.documentElement ? document.documentElement.outerHTML : '';
+      var out = [];
+      var re = /details\.jd\.com\/normal\/item\.action\?orderid=(\d{8,25})[^"'\s<>]*/gi;
+      var m;
+      while ((m = re.exec(html)) !== null && out.length < 6) {
+        var u = m[0];
+        if (u.toLowerCase().indexOf('passkey=') < 0) continue;
+        if (u.indexOf('http') !== 0) { u = 'https://' + u; }
+        out.push({ no: m[1], url: u });
+      }
+      return JSON.stringify(out);
+    })()
+    """#
     /// 把 window.open / target=_blank 改成同标签跳转，否则 WKWebView 里点了没反应。
     private static let jdOpenHijackJS = #"""
     (function(){
@@ -1286,6 +1321,9 @@ final class WebOrderFetcher: NSObject {
         UserAgent.apply(to: wv, desktop: desktop)
         wv.alpha = 0.02
         wv.isUserInteractionEnabled = false
+        // 京东新版订单页的「订单详情」是 window.open/_blank 开的。WKWebView 不实现
+        // createWebViewWith 就等于点了没反应 —— 交给本类实现，原地打开。
+        wv.uiDelegate = self
         attach(wv)
         slots[slot] = wv
         return wv
@@ -1429,5 +1467,24 @@ final class WebOrderFetcher: NSObject {
     private func detach() {
         webView?.removeFromSuperview()
         webView = nil
+    }
+}
+
+// MARK: - 京东新窗口
+
+extension WebOrderFetcher: WKUIDelegate {
+    /// `window.open` / `target=_blank`：WKWebView 不实现这个回调就什么都不发生。
+    /// 这里直接把目标地址塞回同一个 webview，等于「在新标签打开」变成「原地跳转」。
+    func webView(_ webView: WKWebView,
+                 createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = navigationAction.request.url {
+            var req = URLRequest(url: url)
+            req.setValue(UserAgent.macOS, forHTTPHeaderField: "User-Agent")
+            req.setValue("https://order.jd.com/center/list.action", forHTTPHeaderField: "Referer")
+            webView.load(req)
+        }
+        return nil
     }
 }
