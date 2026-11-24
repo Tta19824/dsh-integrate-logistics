@@ -244,21 +244,21 @@ final class AppState: ObservableObject {
             var failed = 0
             for no in targets {
                 // 后台用单独的槽，别把用户正在看的详情页顶掉
-                guard let cap = try? await OrderClient.captureJdDetail(
-                    orderNo: no, cookieHeader: cookie, slot: "detail-jd-bg", seconds: 8) else {
+                guard let detail = await OrderClient.jdPCDetail(
+                    orderNo: no, cookieHeader: cookie, slot: "detail-jd-bg", wait: 16) else {
                     failed += 1
                     continue
                 }
                 // 详情页原样落盘：取件码没读到时，这份文件就是唯一能定位问题的证据
-                let head = "【版本】\(OrderClient.appVersion())\n【详情URL】\(cap.finalURL)\n【字数】\(cap.text.count)\n\n"
-                try? (head + cap.text).data(using: .utf8)?
+                let head = "【版本】\(OrderClient.appVersion())\n【详情URL】\(detail.url)\n【字数】\(detail.text.count)\n\n"
+                try? (head + detail.text).data(using: .utf8)?
                     .write(to: OrderClient.jdDetailFile(for: .jd), options: .atomic)
-                let parsed = JdPCDetail.parse(cap.text)
+                let parsed = JdPCDetail.parse(detail.text)
                 if !parsed.pickupCode.isEmpty {
                     OrderStore.shared.setPickup(orderNo: no, code: parsed.pickupCode)
                     got.append(parsed.pickupCode)
                 }
-                let fallback = TaobaoJdParser.parseJdLogistics(text: cap.text, payloadJSON: cap.payloadJSON)
+                let fallback = TaobaoJdParser.parseJdLogistics(text: detail.text, payloadJSON: "")
                 let events = parsed.events.isEmpty ? fallback.events : parsed.events
                 let tracking = parsed.trackingNo.isEmpty ? fallback.tracking : parsed.trackingNo
                 let carrier = parsed.carrier.isEmpty ? fallback.carrier : parsed.carrier

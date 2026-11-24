@@ -534,29 +534,33 @@ struct LogisticsSheet: View {
             loading = false
             return
         }
-        guard let cap = try? await OrderClient.captureJdDetail(orderNo: order.orderNo, cookieHeader: pcCookie) else {
+        guard let detail = await OrderClient.jdPCDetail(orderNo: order.orderNo, cookieHeader: pcCookie) else {
             message = "没打开京东订单详情页"
             loading = false
             return
         }
-        try? cap.text.data(using: .utf8)?.write(to: OrderClient.jdDetailFile(for: .jd), options: .atomic)
+        // 详情页原样落盘（带 URL，方便一眼看出这次是不是真的进了 details.jd.com）
+        let dumpHead = "【版本】\(OrderClient.appVersion())\n【详情URL】\(detail.url)\n【字数】\(detail.text.count)\n\n"
+        try? (dumpHead + detail.text).data(using: .utf8)?
+            .write(to: OrderClient.jdDetailFile(for: .jd), options: .atomic)
+        let capText = detail.text
         // 京东把没登录的 WebView 渲染成「你好，请登录 / 账号信息获取失败」，那不是订单详情，
         // 更不是物流轨迹 —— 直接说清楚，别拿它拼出几条假进度。
-        let blocked = cap.text.contains("账号信息获取失败")
-            || cap.text.contains("快速验证")
-            || cap.text.contains("免费注册")
+        let blocked = capText.contains("账号信息获取失败")
+            || capText.contains("快速验证")
+            || capText.contains("免费注册")
         if blocked {
             message = "京东这个页面没认登录态（显示「请登录 / 账号信息获取失败」）。先去「平台」页把京东登录一下再回来"
             loading = false
             return
         }
-        let parsed = TaobaoJdParser.parseJdLogistics(text: cap.text, payloadJSON: cap.payloadJSON)
+        let parsed = TaobaoJdParser.parseJdLogistics(text: capText, payloadJSON: "")
         events = parsed.events
         tracking = parsed.tracking
         carrierLine = parsed.carrier.isEmpty ? order.carrier : parsed.carrier
         // 取件码只在这个页面里有：读到就显示 + 存库，列表卡片下次刷新也能直接带上
         if pickup.isEmpty {
-            pickup = DetailParser.pickupCode(from: cap.text)
+            pickup = DetailParser.pickupCode(from: capText)
         }
         if pickup.isEmpty {
             pickup = DetailParser.pickupCode(from: events.map(\.desc).joined(separator: "\n"))

@@ -1053,6 +1053,79 @@ final class WebOrderFetcher: NSObject {
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 
+    /// 京东电脑版详情页必须带 `PassKey`（32 位十六进制），而这个参数是页面「点订单详情」时
+    /// 由站点自己拼出来的 —— 直接拼 `details.jd.com/normal/item.action?orderid=…` 会被弹回订单列表
+    /// （0.36.20 实测：`finalURL` 直接落成 `order.jd.com/center/list.action`，所以取件码永远读不到）。
+    /// 所以这条路只能：打开订单列表 → 找到这张卡里的「订单详情」→ 点它 → 等跳转 → 读正文。
+    /// 返回 `200|<最终URL>|<正文>` 或 `ERR …`。
+    func jdPCDetailByClick(orderNo: String, cookieHeader: String,
+                           slot: String = "detail-jd-bg", wait: Double = 16) async -> String {
+        guard let target = URL(string: "https://order.jd.com/center/list.action") else { return "ERR URL" }
+        let wv: WKWebView
+        if let exist = slots[slot], exist.url?.host?.contains("order.jd.com") == true {
+            wv = exist
+        } else {
+            wv = makeWebView(slot: slot, desktop: true)
+        }
+        await prefillCookies(cookieHeader, platform: .jd, force: true)
+        var request = URLRequest(url: target)
+        request.timeoutInterval = wait
+        request.setValue(UserAgent.macOS, forHTTPHeaderField: "User-Agent")
+        request.setValue("https://www.jd.com/", forHTTPHeaderField: "Referer")
+        _ = await wv.load(request)
+
+        let started = Date()
+        var clicked = false
+        var lastHref = ""
+        var lastText = ""
+        while Date().timeIntervalSince(started) < wait {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            lastHref = (try? await wv.evaluateJavaScript("String(location.href)")) as? String ?? lastHref
+            let text = (try? await wv.evaluateJavaScript("document.body ? document.body.innerText : ''")) as? String ?? ""
+            if text.count > lastText.count { lastText = text }
+            if lastHref.contains("details.jd.com") {
+                // 详情页是服务端渲染，但物流块可能晚一拍才出来
+                var best = lastText
+                for _ in 0..<12 {
+                    if best.contains("取件码") || best.contains("运单号") { break }
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    let later = (try? await wv.evaluateJavaScript("document.body ? document.body.innerText : ''")) as? String ?? ""
+                    if later.count > best.count { best = later }
+                }
+                return "200|\(lastHref)|\(best)"
+            }
+            if !clicked {
+                let ok = (try? await wv.evaluateJavaScript(Self.jdDetailClickJS(orderNo: orderNo))) as? String ?? "0"
+                clicked = ok == "1"
+            }
+        }
+        return "ERR 没跳进详情页（正文 \(lastText.count) 字，当前 \(lastHref)）"
+    }
+
+    /// 在订单列表里点开「这张卡」的订单详情：只点祖先节点正文里带这个订单号的那个，
+    /// 因为「订单详情」既是表头列名也是行内按钮，点表头什么都不会发生。
+    private static func jdDetailClickJS(orderNo: String) -> String {
+        """
+        (function(){
+          var no = '\(orderNo)';
+          var all = document.querySelectorAll('a,button,span,div');
+          var best = null;
+          for (var i = 0; i < all.length; i++) {
+            var e = all[i];
+            if ((e.innerText || '').trim() !== '订单详情') continue;
+            var p = e, hit = false;
+            for (var up = 0; up < 9 && p; up++) {
+              p = p.parentElement;
+              if (!p) break;
+              if ((p.innerText || '').indexOf(no) >= 0) { hit = true; break; }
+            }
+            if (hit) best = e;
+          }
+          if (best) { best.click(); return '1'; }
+          return '0';
+        })()
+        """
+    }
     private func prefillCookies(_ header: String, platform: Platform = .pdd, force: Bool = false) async {
         guard !header.isEmpty else { return }
         let store = WKWebsiteDataStore.default().httpCookieStore
@@ -1226,29 +1299,31 @@ final class WebOrderFetcher: NSObject {
               if (j > 400) break;
             }
           } catch (err2) {}
-          // 图片必须跟订单号绑在一起：平铺一个图片数组再按下标对，对出来的是页头小图标
-          // （用户看到「订单图标不对」就是这么来的）。这里从每个订单详情链接往上爬，
-          // 找到它所在卡片里的商品图。
+          // 图片必须跟订单号绑在一起。0.36.19 是从「订单详情链接」往上爬找卡片，
+          // 但电脑版列表里的详情按钮不带 href（是 JS 点击），所以一张也没绑上，
+          // 界面就一直拿平铺数组的第一张 —— 页头那个 1544 字节的小图标。
+          // 反过来做：遍历图片，往上找那个正文里带「订单号 X」的卡片，对上了就绑。
           var pics = {};
           try {
-            var as2 = (e || document).querySelectorAll('a[href]');
-            for (var k = 0; k < as2.length; k++) {
-              var m2 = (as2[k].href || '').match(/(?:orderId|orderid|deal_id)=(\\d{6,25})/);
-              if (!m2) continue;
-              var node = as2[k];
-              for (var up = 0; up < 7 && node; up++) {
-                node = node.parentElement;
-                if (!node) break;
-                var im = node.querySelector('img');
-                if (!im) continue;
-                var cand = im.getAttribute('data-lazy-img') || im.getAttribute('data-src')
-                        || im.getAttribute('data-origin') || im.currentSrc || im.src || '';
-                if (!cand) continue;
-                if (cand.indexOf('blank') >= 0 || cand.indexOf('loading') >= 0 || cand.indexOf('default') >= 0) continue;
-                if (cand.indexOf('icon') >= 0 || cand.indexOf('logo') >= 0 || cand.indexOf('sprite') >= 0) continue;
-                if (im.naturalWidth > 0 && im.naturalWidth < 60) continue;
-                pics[m2[1]] = cand;
-                break;
+            var imgs2 = (e || document).querySelectorAll('img');
+            for (var k = 0; k < imgs2.length; k++) {
+              var im = imgs2[k];
+              var cand = im.getAttribute('data-lazy-img') || im.getAttribute('data-src')
+                      || im.getAttribute('data-origin') || im.currentSrc || im.src || '';
+              if (!cand) continue;
+              if (cand.indexOf('360buyimg.com') < 0) continue;
+              if (cand.indexOf('blank') >= 0 || cand.indexOf('loading') >= 0 || cand.indexOf('default') >= 0) continue;
+              if (cand.indexOf('icon') >= 0 || cand.indexOf('logo') >= 0 || cand.indexOf('sprite') >= 0) continue;
+              if (im.naturalWidth > 0 && im.naturalWidth < 60) continue;
+              var p2 = im;
+              for (var up2 = 0; up2 < 9 && p2; up2++) {
+                p2 = p2.parentElement;
+                if (!p2) break;
+                var mb = (p2.innerText || '').match(/订单号[^0-9]{0,8}(\\d{9,25})/);
+                if (mb) {
+                  if (!pics[mb[1]]) pics[mb[1]] = cand;
+                  break;
+                }
               }
             }
           } catch (err3) {}
