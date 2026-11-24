@@ -1,4 +1,4 @@
-﻿import SwiftUI
+import SwiftUI
 import CoreLocation
 import UIKit
 
@@ -447,18 +447,11 @@ struct LogisticsSheet: View {
 
     private var trackingRow: some View {
         HStack(spacing: 8) {
-            if !carrierLine.isEmpty {
-                Text(carrierLine)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.primary)
-                Text("·")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            } else {
-                Text("快递单号")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            // 模板固定：左边永远是「快递单号」四个字，右边是单号本身。
+            // 快递公司属于订单卡片（状态胶囊下面那行），不往这里塞 —— 之前塞进来被用户说「乱整」。
+            Text("快递单号")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Text(tracking.isEmpty ? "暂未获取" : tracking)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(tracking.isEmpty ? .secondary : .primary)
@@ -539,6 +532,11 @@ struct LogisticsSheet: View {
         carrierLine = jdParsed.carrier.isEmpty
             ? (parsed.carrier.isEmpty ? order.carrier : parsed.carrier)
             : jdParsed.carrier
+        // 快递公司在卡片上的位置是「状态胶囊下面那行」（模板早就有），但 Order.carrier 一直是空的。
+        // 读到就存库，下次刷新列表时卡片才有东西可显示。
+        if !carrierLine.isEmpty, carrierLine != order.carrier {
+            OrderStore.shared.setCarrier(orderNo: order.orderNo, name: carrierLine)
+        }
         // 取件码只在这个页面里有：读到就显示 + 存库，列表卡片下次刷新也能直接带上
         if pickup.isEmpty { pickup = jdParsed.pickupCode }
         if pickup.isEmpty { pickup = DetailParser.pickupCode(from: capText) }

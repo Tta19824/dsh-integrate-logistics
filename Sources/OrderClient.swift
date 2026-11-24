@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 
 struct FetchOutcome {
     var orders: [Order]
@@ -357,7 +357,12 @@ enum OrderClient {
         // 真订单页哪怕只有一单，正文里一定出现「订单号」这三个字。
         let pcTrustworthy = !pcRows.isEmpty && (pcRows.count >= 2 || pcText.contains("订单号"))
         let orders = pcTrustworthy ? pcRows.enumerated().map { (index, row) -> Order in
-            Order(id: Order.makeID(platform: .jd, orderNo: row.orderNo),
+            // 图片：列表页 lazyload 抓到的那张是京东自己的占位图，刷新后会在卡片上闪一下，
+            // 所以优先用详情页存下来的真图；没有才退回列表页的。
+            // 快递公司：列表页根本不带，只能等详情页读到后存进 carrier_cache。
+            let cachedImgs = OrderStore.shared.cachedImages()
+            let cachedCarriers = OrderStore.shared.cachedCarriers()
+            return Order(id: Order.makeID(platform: .jd, orderNo: row.orderNo),
                   platform: .jd,
                   orderNo: row.orderNo,
                   title: row.title,
@@ -368,7 +373,8 @@ enum OrderClient {
                   orderTime: row.dateText,
                   logistics: "",
                   pickupCode: "",
-                  imageURL: pcPics[row.orderNo] ?? (index < pcImgs.count ? pcImgs[index] : ""),
+                  carrier: cachedCarriers[row.orderNo] ?? "",
+                  imageURL: cachedImgs[row.orderNo] ?? (pcPics[row.orderNo] ?? (index < pcImgs.count ? pcImgs[index] : "")),
                   updatedAt: Date())
         } : []
         var out = PcResult()

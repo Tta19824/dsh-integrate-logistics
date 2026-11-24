@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 import SQLite3
 
 private let SQLITE_TRANSIENT = unsafeBitCast(OpaquePointer(bitPattern: -1), to: sqlite3_destructor_type.self)
@@ -49,6 +49,7 @@ final class OrderStore {
         sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS trace_summary (order_no TEXT PRIMARY KEY, text TEXT, updated REAL);", nil, nil, nil)
         sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS pickup_cache (order_no TEXT PRIMARY KEY, code TEXT, updated REAL);", nil, nil, nil)
         sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS image_cache (order_no TEXT PRIMARY KEY, url TEXT, updated REAL);", nil, nil, nil)
+        sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS carrier_cache (order_no TEXT PRIMARY KEY, name TEXT, updated REAL);", nil, nil, nil)
         sqlite3_exec(db, "DELETE FROM trace_summary WHERE order_no IS NULL OR order_no = '' OR text IS NULL OR text = '';", nil, nil, nil)
         if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
             NSLog("[store] create table failed: \(String(cString: sqlite3_errmsg(db)))")
@@ -80,6 +81,13 @@ final class OrderStore {
                 UPDATE orders SET image_url = (SELECT url FROM image_cache i WHERE i.order_no = orders.order_no)
                 WHERE (image_url IS NULL OR image_url = '')
                   AND EXISTS (SELECT 1 FROM image_cache i WHERE i.order_no = orders.order_no);
+                """, nil, nil, nil)
+            // 快递公司：列表接口不带，只有详情页里有（「配送方式：京东快递」）。
+            // 卡片上「待收货」下面那一行读的就是 orders.carrier，刷新后要能贴回来。
+            sqlite3_exec(db, """
+                UPDATE orders SET carrier = (SELECT name FROM carrier_cache c WHERE c.order_no = orders.order_no)
+                WHERE (carrier IS NULL OR carrier = '')
+                  AND EXISTS (SELECT 1 FROM carrier_cache c WHERE c.order_no = orders.order_no);
                 """, nil, nil, nil)
         }
     }
@@ -167,8 +175,65 @@ final class OrderStore {
             sqlite3_finalize(cstmt)
         }
     }
-    func setTrace(orderNo: String, text value: String) {
+    /// 快递公司：京东列表接口不给，只有详情页「配送信息」里那行。
+    /// 和图片一样，刷新会整平台重写，所以同时写 carrier_cache，建行时贴回去。
+    func setCarrier(orderNo: String, name: String) {
+        guard !name.isEmpty else { return }
         queue.sync {
+            guard let db else { return }
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "UPDATE orders SET carrier = ? WHERE order_no = ?;", -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, name, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, orderNo, -1, SQLITE_TRANSIENT)
+                sqlite3_step(stmt)
+            }
+            sqlite3_finalize(stmt)
+            var cstmt: OpaquePointer?
+            let csql = "INSERT INTO carrier_cache (order_no, name, updated) VALUES (?, ?, ?) ON CONFLICT(order_no) DO UPDATE SET name = excluded.name, updated = excluded.updated;"
+            if sqlite3_prepare_v2(db, csql, -1, &cstmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(cstmt, 1, orderNo, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(cstmt, 2, name, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_double(cstmt, 3, Date().timeIntervalSince1970)
+                sqlite3_step(cstmt)
+            }
+            sqlite3_finalize(cstmt)
+        }
+    }
+
+    /// 建行时用：上一次从详情页读到的快递公司（按订单号）。
+    func cachedCarriers() -> [String: String] {
+        var map: [String: String] = [:]
+        queue.sync {
+            guard let db else { return }
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT order_no, name FROM carrier_cache;", -1, &stmt, nil) == SQLITE_OK else { return }
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let cNo = sqlite3_column_text(stmt, 0), let cName = sqlite3_column_text(stmt, 1) else { continue }
+                map[String(cString: cNo)] = String(cString: cName)
+            }
+            sqlite3_finalize(stmt)
+        }
+        return map
+    }
+
+    /// 建行时用：上一次从详情页读到的商品图（按订单号）。
+    /// 列表页抓到的图是京东自己的占位图，刷新完会在卡片上闪一下，所以优先用这份。
+    func cachedImages() -> [String: String] {
+        var map: [String: String] = [:]
+        queue.sync {
+            guard let db else { return }
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT order_no, url FROM image_cache;", -1, &stmt, nil) == SQLITE_OK else { return }
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let cNo = sqlite3_column_text(stmt, 0), let cUrl = sqlite3_column_text(stmt, 1) else { continue }
+                map[String(cString: cNo)] = String(cString: cUrl)
+            }
+            sqlite3_finalize(stmt)
+        }
+        return map
+    }
+
+    func setTrace(orderNo: String, text value: String) {        queue.sync {
             guard let db else { return }
             let sql = "INSERT INTO trace_summary (order_no, text, updated) VALUES (?, ?, ?) ON CONFLICT(order_no) DO UPDATE SET text = excluded.text, updated = excluded.updated;"
             var stmt: OpaquePointer?

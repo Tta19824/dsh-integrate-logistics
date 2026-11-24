@@ -1,4 +1,4 @@
-﻿import SwiftUI
+import SwiftUI
 
 @MainActor
 final class AppState: ObservableObject {
@@ -265,6 +265,10 @@ final class AppState: ObservableObject {
                 let events = parsed.events.isEmpty ? fallback.events : parsed.events
                 let tracking = parsed.trackingNo.isEmpty ? fallback.tracking : parsed.trackingNo
                 let carrier = parsed.carrier.isEmpty ? fallback.carrier : parsed.carrier
+                if !carrier.isEmpty {
+                    // 卡片上「待收货」下面那行写的就是它
+                    OrderStore.shared.setCarrier(orderNo: no, name: carrier)
+                }
                 if let latest = events.first, !latest.desc.isEmpty {
                     TraceCache.shared.put("jd:\(no)", TraceCache.Item(
                         at: Date(), events: events, tracking: tracking, carrier: carrier))
