@@ -249,6 +249,10 @@ final class AppState: ObservableObject {
                     failed += 1
                     continue
                 }
+                // 详情页原样落盘：取件码没读到时，这份文件就是唯一能定位问题的证据
+                let head = "【版本】\(OrderClient.appVersion())\n【详情URL】\(cap.finalURL)\n【字数】\(cap.text.count)\n\n"
+                try? (head + cap.text).data(using: .utf8)?
+                    .write(to: OrderClient.jdDetailFile(for: .jd), options: .atomic)
                 let parsed = JdPCDetail.parse(cap.text)
                 if !parsed.pickupCode.isEmpty {
                     OrderStore.shared.setPickup(orderNo: no, code: parsed.pickupCode)
