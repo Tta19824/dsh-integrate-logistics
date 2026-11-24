@@ -275,14 +275,11 @@ final class AppState: ObservableObject {
                 guard let self else { return }
                 self.jdPickupBusy = false
                 self.reload()
-                // 取件码是异步补的，用户不会盯着看 —— 结果必须说出来，否则「没出现」永远没法归因
-                if !got.isEmpty {
-                    self.show("京东取件码：\(got.joined(separator: "、"))")
-                } else if traced > 0 {
-                    self.show("京东详情读到了（轨迹 \(traced) 单），但没找到取件码")
-                } else if failed > 0 {
-                    self.show("京东详情页没读到内容 —— 发「调试 · 抓取文件 → 京东 → 订单详情页」给我")
-                }
+                // 这里是「刷新已经出结果之后」才跑完的后台补抓。用户明确要求过：
+                // 点完刷新、结果已经出来了，就不许过几秒再冒一条 —— 所以这一路只静默更新数据，
+                // 一个提示都不弹。要排查时看这个 key 或者「订单详情页」那份文件。
+                UserDefaults.standard.set("got=\(got.joined(separator: ","))|traced=\(traced)|failed=\(failed)",
+                                          forKey: "jd_last_pickup")
             }
         }
     }

@@ -568,6 +568,13 @@ struct LogisticsSheet: View {
         if !pickup.isEmpty, pickup != order.pickupCode {
             OrderStore.shared.setPickup(orderNo: order.orderNo, code: pickup)
         }
+        if pickup.isEmpty {
+            // 取件码读不到时，把「这一页到底是哪一页」直接写在界面上：
+            // 落在 order.jd.com 就是根本没进详情页（详情页要 PassKey），落在 details.jd.com 才是解析问题。
+            let host = URL(string: detail.url)?.host ?? "未知"
+            let path = URL(string: detail.url)?.path ?? ""
+            message = "这页是 \(host)\(path) · \(detail.text.count) 字 · 没找到取件码"
+        }
         if events.isEmpty {
             // 还没发货：京东列表接口只给「正在出库 / 仓库处理中」这类摘要，
             // 拿摘要当一条进度，别让详情页空着。

@@ -1073,9 +1073,14 @@ final class WebOrderFetcher: NSObject {
         request.setValue(UserAgent.macOS, forHTTPHeaderField: "User-Agent")
         request.setValue("https://www.jd.com/", forHTTPHeaderField: "Referer")
         _ = await wv.load(request)
+        // 京东新版列表的「订单详情」是 target=_blank / window.open 打开的。
+        // WKWebView 没实现 createWebViewWith，这两条路都等于「点了没反应」——
+        // 先把 window.open 和 _blank 改成同标签跳转，再点。
+        _ = await wv.evaluateJavaScript(Self.jdOpenHijackJS)
 
         let started = Date()
         var clicked = false
+        var triedLink = false
         var lastHref = ""
         var lastText = ""
         while Date().timeIntervalSince(started) < wait {
@@ -1098,10 +1103,58 @@ final class WebOrderFetcher: NSObject {
                 let ok = (try? await wv.evaluateJavaScript(Self.jdDetailClickJS(orderNo: orderNo))) as? String ?? "0"
                 clicked = ok == "1"
             }
+            // 点不动再退一步：直接把这张卡的详情链接拿去同标签打开
+            if !triedLink, Date().timeIntervalSince(started) > 4 {
+                triedLink = true
+                _ = await wv.evaluateJavaScript(Self.jdDetailLinkJS(orderNo: orderNo))
+            }
         }
         return "ERR 没跳进详情页（正文 \(lastText.count) 字，当前 \(lastHref)）"
     }
 
+    /// 把 window.open / target=_blank 改成同标签跳转，否则 WKWebView 里点了没反应。
+    private static let jdOpenHijackJS = #"""
+    (function(){
+      try {
+        window.open = function(u){ if (u) { location.href = u; } return null; };
+      } catch (e) {}
+      try {
+        document.addEventListener('click', function(ev){
+          var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
+          if (a && (a.target === '_blank' || a.target === '_new')) {
+            ev.preventDefault();
+            location.href = a.href;
+          }
+        }, true);
+      } catch (e) {}
+      return '1';
+    })()
+    """#
+
+    /// 兜底：这张卡的详情链接要是就在 DOM 里，直接跳过去。
+    private static func jdDetailLinkJS(orderNo: String) -> String {
+        """
+        (function(){
+          var no = '\(orderNo)';
+          var as = document.querySelectorAll('a[href]');
+          for (var i = 0; i < as.length; i++) {
+            var a = as[i];
+            var h = a.getAttribute('href') || '';
+            if (h.indexOf('orderid') < 0 && h.indexOf('orderId') < 0 &&
+                h.indexOf('viewOrder') < 0 && h.indexOf('orderDetail') < 0 &&
+                h.indexOf('details.jd.com') < 0) continue;
+            var p = a, hit = false;
+            for (var up = 0; up < 9 && p; up++) {
+              p = p.parentElement;
+              if (!p) break;
+              if ((p.innerText || '').indexOf(no) >= 0) { hit = true; break; }
+            }
+            if (hit) { location.href = a.href; return '1'; }
+          }
+          return '0';
+        })()
+        """
+    }
     /// 在订单列表里点开「这张卡」的订单详情：只点祖先节点正文里带这个订单号的那个，
     /// 因为「订单详情」既是表头列名也是行内按钮，点表头什么都不会发生。
     private static func jdDetailClickJS(orderNo: String) -> String {
