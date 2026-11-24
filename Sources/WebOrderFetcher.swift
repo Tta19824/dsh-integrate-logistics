@@ -1260,7 +1260,7 @@ final class WebOrderFetcher: NSObject {
             for (var q = 0; q < as3.length; q++) {
               var h3 = as3[q].href || '';
               if (h3.indexOf('details.jd.com') < 0 && h3.indexOf('item.action') < 0) continue;
-              var m3 = h3.match(/(?:orderid|orderId)=(\d{6,25})/);
+              var m3 = h3.match(/(?:orderid|orderId)=(\\d{6,25})/);
               if (m3) details[m3[1]] = h3;
               if (q > 400) break;
             }

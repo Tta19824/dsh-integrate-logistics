@@ -282,7 +282,6 @@ final class AppState: ObservableObject {
             }
         }
     }
-    }
 
     /// 打开 App / 回到前台时，如果数据已经旧了就在后台刷一次：
     /// 用户看到的是「已经好的列表」，而不是等 7 秒的转圈。
@@ -336,3 +335,4 @@ final class AppState: ObservableObject {
             if !quiet { BackgroundRefresh.post(changes) }
         }
     }
+}
