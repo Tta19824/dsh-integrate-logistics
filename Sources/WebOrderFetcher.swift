@@ -1076,7 +1076,7 @@ final class WebOrderFetcher: NSObject {
         // 京东新版列表的「订单详情」是 target=_blank / window.open 打开的。
         // WKWebView 没实现 createWebViewWith，这两条路都等于「点了没反应」——
         // 先把 window.open 和 _blank 改成同标签跳转，再点。
-        _ = await wv.evaluateJavaScript(Self.jdOpenHijackJS)
+        _ = try? await wv.evaluateJavaScript(Self.jdOpenHijackJS)
 
         let started = Date()
         var clicked = false
@@ -1106,7 +1106,7 @@ final class WebOrderFetcher: NSObject {
             // 点不动再退一步：直接把这张卡的详情链接拿去同标签打开
             if !triedLink, Date().timeIntervalSince(started) > 4 {
                 triedLink = true
-                _ = await wv.evaluateJavaScript(Self.jdDetailLinkJS(orderNo: orderNo))
+                _ = try? await wv.evaluateJavaScript(Self.jdDetailLinkJS(orderNo: orderNo))
             }
         }
         return "ERR 没跳进详情页（正文 \(lastText.count) 字，当前 \(lastHref)）"
