@@ -1206,7 +1206,8 @@ final class WebOrderFetcher: NSObject {
           try {
             var nodes = (e || document).querySelectorAll('img');
             for (var i = 0; i < nodes.length; i++) {
-              var s = nodes[i].src || '';
+              var s = nodes[i].getAttribute('data-lazy-img') || nodes[i].getAttribute('data-src')
+                   || nodes[i].getAttribute('data-origin') || nodes[i].currentSrc || nodes[i].src || '';
               if (s.indexOf('360buyimg.com') >= 0 && s.indexOf('icon') < 0 && s.indexOf('logo') < 0 && s.indexOf('sprite') < 0 && (nodes[i].naturalWidth === 0 || nodes[i].naturalWidth >= 60)) {
                 imgs.push(s);
               }
@@ -1238,16 +1239,33 @@ final class WebOrderFetcher: NSObject {
               for (var up = 0; up < 7 && node; up++) {
                 node = node.parentElement;
                 if (!node) break;
-                var im = node.querySelector('img[src*="360buyimg"]');
-                if (!im || !im.src) continue;
-                if (im.src.indexOf('icon') >= 0 || im.src.indexOf('logo') >= 0 || im.src.indexOf('sprite') >= 0) continue;
+                var im = node.querySelector('img');
+                if (!im) continue;
+                var cand = im.getAttribute('data-lazy-img') || im.getAttribute('data-src')
+                        || im.getAttribute('data-origin') || im.currentSrc || im.src || '';
+                if (!cand) continue;
+                if (cand.indexOf('blank') >= 0 || cand.indexOf('loading') >= 0 || cand.indexOf('default') >= 0) continue;
+                if (cand.indexOf('icon') >= 0 || cand.indexOf('logo') >= 0 || cand.indexOf('sprite') >= 0) continue;
                 if (im.naturalWidth > 0 && im.naturalWidth < 60) continue;
-                pics[m2[1]] = im.src;
+                pics[m2[1]] = cand;
                 break;
               }
             }
           } catch (err3) {}
-          return JSON.stringify({ t: text, i: imgs, l: links, p: pics });
+          // 老版详情页（details.jd.com/normal/item.action?orderid=…&PassKey=…）才是信息齐全的那一页，
+          // 取件码 / 运单号 / 轨迹时间线都在里面。PassKey 只能从这类链接里捡。
+          var details = {};
+          try {
+            var as3 = (e || document).querySelectorAll('a[href]');
+            for (var q = 0; q < as3.length; q++) {
+              var h3 = as3[q].href || '';
+              if (h3.indexOf('details.jd.com') < 0 && h3.indexOf('item.action') < 0) continue;
+              var m3 = h3.match(/(?:orderid|orderId)=(\d{6,25})/);
+              if (m3) details[m3[1]] = h3;
+              if (q > 400) break;
+            }
+          } catch (err4) {}
+          return JSON.stringify({ t: text, i: imgs, l: links, p: pics, d: details });
         })()
         """
         let payload = (try? await wv.evaluateJavaScript(js)) as? String ?? ""

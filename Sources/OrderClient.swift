@@ -134,8 +134,10 @@ enum OrderClient {
         let pcMode = cookieHeader.contains("thor=")
         var candidates: [String] = []
         if pcMode {
+            // 列表页里捡到的链接最准（带 PassKey）。捡不到就退回不带 PassKey 的同一页 ——
+            // 千万别再去 order.jd.com/center/viewOrder.action，那一页只有一句「请上门提货」。
             if let known = JdPCLinks.url(for: orderNo) { candidates.append(known) }
-            candidates.append("https://order.jd.com/center/viewOrder.action?orderId=\(orderNo)")
+            candidates.append("https://details.jd.com/normal/item.action?orderid=\(orderNo)")
         } else {
             candidates.append("https://trade.m.jd.com/order/n_detail_jdm.shtml?deal_id=\(orderNo)")
             candidates.append("https://order.m.jd.com/orderDetail?orderId=\(orderNo)")
@@ -278,6 +280,8 @@ enum OrderClient {
 
     private static func jdPCRows(cookie: String) async -> PcResult {
         let (status, html) = await JdDirect.fetchOrderListHTML(cookie: cookie)
+        // HTML 直取到的老版页面里常带 `orderid=…&PassKey=…` 的详情链接，先捡一遍
+        JdPCLinks.harvest(from: html)
         var pcRows = JdPCList.parse(html: html)
         var pcSource = "HTML直取"
         var pcText = HTMLTools.strip(html)
@@ -298,6 +302,9 @@ enum OrderClient {
                     pcPics = (obj["p"] as? [String: String]) ?? [:]
                     if let links = obj["l"] as? [String: String], !links.isEmpty {
                         JdPCLinks.save(links)
+                    }
+                    if let details = obj["d"] as? [String: String], !details.isEmpty {
+                        JdPCLinks.save(details)
                     }
                 } else {
                     pcText = body
@@ -375,6 +382,23 @@ enum OrderClient {
 
         static func url(for orderNo: String) -> String? {
             all()[orderNo]
+        }
+
+        /// 老版订单页的详情链接直接写在 HTML 里（`…item.action?orderid=123&PassKey=ABCD…`），
+        /// 渲染后的 DOM 里不一定还有，所以两边都扫一遍补进表里。
+        static func harvest(from html: String) {
+            guard !html.isEmpty else { return }
+            let pattern = #"(?:orderid|orderId|deal_id)=(\d{8,25})&(?:amp;)?PassKey=([0-9A-Fa-f]{16,64})"#
+            guard let re = try? NSRegularExpression(pattern: pattern) else { return }
+            let ns = html as NSString
+            var found: [String: String] = [:]
+            re.enumerateMatches(in: html, range: NSRange(location: 0, length: ns.length)) { match, _, _ in
+                guard let match, match.numberOfRanges > 2 else { return }
+                let no = ns.substring(with: match.range(at: 1))
+                let passKey = ns.substring(with: match.range(at: 2))
+                found[no] = "https://details.jd.com/normal/item.action?orderid=\(no)&PassKey=\(passKey)"
+            }
+            if !found.isEmpty { save(found) }
         }
     }
     private static func fetchJd() async throws -> FetchOutcome {

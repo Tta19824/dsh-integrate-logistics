@@ -161,7 +161,8 @@ final class AppState: ObservableObject {
                 // 京东这条 note 里带「降级」就是被风控挡了：界面上的绿点不该继续说「已登录」
                 if platform == .jd {
                     jdBlocked = outcome.note.contains("降级") || outcome.note.contains("被风控")
-                    // 取件码补抓暂时停用：它走的是手机版详情页，0.36.18 把手机版删了（下一步改电脑版详情页）
+                    // 取件码/运单号/轨迹都在老版详情页里，刷新完后台补最近几单
+                    if !outcome.orders.isEmpty { enrichJdPickup() }
                 }
                 show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)")
             } catch {
@@ -225,50 +226,62 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// 京东的取件码和物流摘要只能从订单详情页里读（列表接口里压根没有这两个字段）。    /// 刷新完在后台补最近一两单，用户点进「物流详情」时就已经有内容，不用再等页面加载。
-    private func enrichJdPickup(limit: Int = 2) {
+    /// 京东的取件码 / 运单号 / 轨迹时间线只在老版详情页里（`details.jd.com/normal/item.action`）。
+    /// 刷新完在后台补最近几单，用户点进「物流详情」时就已经有内容，不用再等页面加载。
+    private func enrichJdPickup(limit: Int = 3) {
         guard !isDisabled(.jd) else { return }
         guard !jdPickupBusy else { return }
-        guard let cookie = CookieStore.load(for: .jd), !cookie.isEmpty else { return }
+        guard let cookie = CookieStore.loadPc(for: .jd), !cookie.isEmpty else { return }
         let targets = orders
-            .filter { $0.platform == .jd && $0.status == .shipped && $0.pickupCode.isEmpty }
+            .filter { $0.platform == .jd && $0.status == .shipped }
             .prefix(limit)
             .map { $0.orderNo }
         guard !targets.isEmpty else { return }
         jdPickupBusy = true
         Task { [weak self] in
-            defer { Task { @MainActor in self?.jdPickupBusy = false } }
             var got: [String] = []
-            var blocked = 0
+            var traced = 0
+            var failed = 0
             for no in targets {
                 // 后台用单独的槽，别把用户正在看的详情页顶掉
                 guard let cap = try? await OrderClient.captureJdDetail(
-                    orderNo: no, cookieHeader: cookie, slot: "detail-jd-bg", seconds: 7) else { continue }
-                if cap.text.contains("账号信息获取失败") || cap.text.contains("免费注册") { blocked += 1 }
-                let code = DetailParser.pickupCode(from: cap.text)
-                if !code.isEmpty {
-                    OrderStore.shared.setPickup(orderNo: no, code: code)
-                    got.append(code)
+                    orderNo: no, cookieHeader: cookie, slot: "detail-jd-bg", seconds: 8) else {
+                    failed += 1
+                    continue
                 }
-                let parsed = TaobaoJdParser.parseJdLogistics(text: cap.text, payloadJSON: cap.payloadJSON)
-                if let latest = parsed.events.first, !latest.desc.isEmpty {
+                let parsed = JdPCDetail.parse(cap.text)
+                if !parsed.pickupCode.isEmpty {
+                    OrderStore.shared.setPickup(orderNo: no, code: parsed.pickupCode)
+                    got.append(parsed.pickupCode)
+                }
+                let fallback = TaobaoJdParser.parseJdLogistics(text: cap.text, payloadJSON: cap.payloadJSON)
+                let events = parsed.events.isEmpty ? fallback.events : parsed.events
+                let tracking = parsed.trackingNo.isEmpty ? fallback.tracking : parsed.trackingNo
+                let carrier = parsed.carrier.isEmpty ? fallback.carrier : parsed.carrier
+                if let latest = events.first, !latest.desc.isEmpty {
                     TraceCache.shared.put("jd:\(no)", TraceCache.Item(
-                        at: Date(), events: parsed.events, tracking: parsed.tracking, carrier: parsed.carrier))
+                        at: Date(), events: events, tracking: tracking, carrier: carrier))
                     OrderStore.shared.setTrace(orderNo: no, text: latest.desc)
+                    traced += 1
+                } else {
+                    failed += 1
                 }
-                guard let self else { return }
-                await MainActor.run { self.reload() }
             }
-            // 取件码是异步补的，用户不会盯着看 —— 结果必须说出来，否则「没出现」永远没法归因
-            guard let self else { return }
-            if !got.isEmpty {
-                self.show("京东取件码：\(got.joined(separator: "、"))")
-            } else if blocked > 0 {
-                self.show("京东取件码没读到：详情页显示「请登录 / 账号信息获取失败」，先去「平台」页重登京东")
-            } else {
-                self.show("京东取件码没读到：详情页里没有「取件码」字样")
+            await MainActor.run {
+                guard let self else { return }
+                self.jdPickupBusy = false
+                self.reload()
+                // 取件码是异步补的，用户不会盯着看 —— 结果必须说出来，否则「没出现」永远没法归因
+                if !got.isEmpty {
+                    self.show("京东取件码：\(got.joined(separator: "、"))")
+                } else if traced > 0 {
+                    self.show("京东详情读到了（轨迹 \(traced) 单），但没找到取件码")
+                } else if failed > 0 {
+                    self.show("京东详情页没读到内容 —— 发「调试 · 抓取文件 → 京东 → 订单详情页」给我")
+                }
             }
         }
+    }
     }
 
     /// 打开 App / 回到前台时，如果数据已经旧了就在后台刷一次：
@@ -317,10 +330,9 @@ final class AppState: ObservableObject {
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "last_refresh_at")
             if !quiet { show(lines.joined(separator: "；")) }
             enrichTaobaoTrace()
-            // enrichJdPickup()（同上，等电脑版详情页）
+            enrichJdPickup()
             BackgroundRefresh.schedule()
             let changes = BackgroundRefresh.diff(orders: orders)
             if !quiet { BackgroundRefresh.post(changes) }
         }
     }
-}
