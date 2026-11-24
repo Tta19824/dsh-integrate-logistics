@@ -189,7 +189,8 @@ enum OrderClient {
             if parts.count == 3 {
                 let url = String(parts[1])
                 if url.contains("PassKey") { JdPCLinks.save([orderNo: url]) }
-                return (url, String(parts[2]), WebOrderFetcher.shared.lastDetailImage)
+                let pic = await WebOrderFetcher.shared.lastDetailImage
+                return (url, String(parts[2]), pic)
             }
         }
         guard let cap = try? await captureJdDetail(orderNo: orderNo, cookieHeader: cookieHeader,
