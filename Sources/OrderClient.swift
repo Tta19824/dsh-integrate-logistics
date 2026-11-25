@@ -298,6 +298,16 @@ enum OrderClient {
         var diag = ""
     }
 
+    /// 详情页的「配送方式：京东快递」后面粘着「快递咨询」链接，innerText 拼出来是
+    /// 「京东快递快递咨询」——旧版本已经把这个脏值写进库了，建行时顺手擦掉尾巴。
+    private static func pcCleanCarrier(_ raw: String) -> String {
+        var v = raw
+        for junk in ["快递咨询", "物流咨询", "快递查询", "物流查询"] where v.hasSuffix(junk) {
+            v = String(v.dropLast(junk.count))
+        }
+        return v
+    }
+
     private static func jdPCRows(cookie: String) async -> PcResult {
         let (status, html) = await JdDirect.fetchOrderListHTML(cookie: cookie)
         // HTML 直取到的老版页面里常带 `orderid=…&PassKey=…` 的详情链接，先捡一遍
@@ -373,7 +383,7 @@ enum OrderClient {
                   orderTime: row.dateText,
                   logistics: "",
                   pickupCode: "",
-                  carrier: cachedCarriers[row.orderNo] ?? "",
+                  carrier: pcCleanCarrier(cachedCarriers[row.orderNo] ?? ""),
                   imageURL: cachedImgs[row.orderNo] ?? (pcPics[row.orderNo] ?? (index < pcImgs.count ? pcImgs[index] : "")),
                   updatedAt: Date())
         } : []

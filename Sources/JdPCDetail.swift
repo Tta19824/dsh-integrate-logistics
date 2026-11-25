@@ -58,8 +58,9 @@ enum JdPCDetail {
         if let no = HTMLTools.firstMatch(#"运单号\s*[:：]?\s*([A-Za-z0-9]{8,25})"#, in: text) {
             out.trackingNo = no
         }
-        // 详情页「配送信息」里写的是「配送方式：京东快递」，承运人栏有时是「承运人：京东快递」
-        if let carrier = HTMLTools.firstMatch(#"(?:承运人|配送方式)\s*[:：]?\s*([^\s，,；;()（）]{2,12})"#, in: text) {
+        // 详情页「配送信息」里写的是「配送方式：京东快递」，后面还跟着一个「快递咨询」的链接，
+        // innerText 会把它们粘成「京东快递快递咨询」。直接按白名单截断，别再往后吞字。
+        if let carrier = HTMLTools.firstMatch(#"(?:承运人|配送方式)\s*[:：]?\s*(京东物流|京东快递|顺丰速运|顺丰快运|顺丰|申通快递|申通|圆通速递|圆通|中通快递|中通|韵达快递|韵达|极兔速递|极兔|邮政EMS|EMS|德邦快递|德邦|菜鸟直送|丹鸟)"#, in: text) {
             out.carrier = carrier
         }
 
@@ -88,9 +89,11 @@ enum JdPCDetail {
         var id = 0
 
         for (i, line) in lines.enumerated() {
-            // A. 自带时间的描述行（时间 + 空格 + 正文）：描述本身就是内容，不再找状态行。
-            if let r = line.range(of: #"^\d{2}:\d{2}:\d{2}\s+"#, options: .regularExpression) {
-                let timePart = String(line[r]).trimmingCharacters(in: .whitespaces)
+            // A. 自带时间的描述行（时间 + 正文）：「14:14:38 正在长途运输中…」。
+            //    注意京东渲染出来的 innerText 里时间与正文之间**不一定有空格**（有时直接粘在一起），
+            //    所以这里只认行首的 HH:MM:SS，后面剩下什么都当描述；纯时间行没有描述会自动落到 B。
+            if let r = line.range(of: #"^\d{2}:\d{2}:\d{2}"#, options: .regularExpression) {
+                let timePart = String(line[r])
                 let desc = String(line[r.upperBound...]).trimmingCharacters(in: .whitespaces)
                 if desc.count >= 4 {
                     let date = upcomingDate[i] ?? ""
@@ -98,8 +101,8 @@ enum JdPCDetail {
                     events.append(ShipEvent(id: id,
                                             time: date.isEmpty ? timePart : date + " " + timePart,
                                             desc: desc))
+                    continue
                 }
-                continue
             }
 
             // B. 纯时间行：状态行通常紧挨在上面（京东是「状态在上、时间在下」），
