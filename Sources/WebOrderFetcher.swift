@@ -1031,6 +1031,14 @@ final class WebOrderFetcher: NSObject {
     /// 把钥匙串里存的 cookie 灌回 WebView，避免 WebView 自己的存储被系统清过。
     /// 注意：WebView 里已经有的同名 cookie 不覆盖——那里的可能比钥匙串里的新。
     /// 在页面里找到文字完全等于某个标签名的元素并点它。
+    /// 拼多多订单页是不是「热的」（还开着、且最近 15 分钟内加载过）。
+    /// 冷启动时不要走 `pddWarmRefetch`：它要等页面自己先打一次 `order_list`，
+    /// 实测页面有时候根本不打（直接吃缓存/显示别的），白等 6 秒（用户 m04124 的「7.8 秒」就是这笔）。
+    func pddPageIsWarm() -> Bool {
+        guard slots["pdd"] != nil else { return false }
+        return Date().timeIntervalSince(loadedAt["pdd"] ?? .distantPast) < 900
+    }
+
     /// 拼多多刷新：先借页面现算的签名把**第一页**问一次，不行再点标签兜底。
     ///
     /// 五次踩坑都记在这里，别再走回去：
@@ -1058,8 +1066,9 @@ final class WebOrderFetcher: NSObject {
             req.setValue(UserAgent.iOS, forHTTPHeaderField: "User-Agent")
             _ = await wv.load(req)
             loadedAt["pdd"] = Date()
-            // 等页面自己先打一次 order_list（哪怕它带 offset）—— 我们要的是它的 URL/头/签名当模板
-            let coldDeadline = Date().addingTimeInterval(6)
+            // 等页面自己先打一次 order_list（哪怕它带 offset）—— 我们要的是它的 URL/头/签名当模板。
+            // 注意：页面有时候根本不打（吃缓存），所以只等 2.5 秒；等不到就走兜底，别把刷新拖成 7 秒。
+            let coldDeadline = Date().addingTimeInterval(2.5)
             while Date() < coldDeadline {
                 let hasEntry = (try? await wv.evaluateJavaScript("(function(){var a=window.__dshCap||[];for(var i=0;i<a.length;i++){var u=String((a[i]||{}).u||'');if(u.indexOf('order_list')>=0){return '1'}}return ''})()")) as? String == "1"
                 if hasEntry { break }

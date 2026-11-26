@@ -725,12 +725,11 @@ enum OrderClient {
     private static func fetchPinduoduo(cookie: String) async throws -> FetchOutcome {
         let started = Date()
 
-        // 快路零·点标签现取：在订单页上依次点「待发货/待收货/全部」，收这次新发出的请求。
-        // 这是唯一「数据一定是现在的」的路线 —— 重放旧存档只是当时的快照，
-        // 新下的单、刚退掉的单在快照里都还是旧状态（用户 m03735 遇到的正是这个）。
-        // 注意：不能只点本来就选中的标签、也不能 reload（会先发带 offset 的翻页请求，见 pddWarmRefetch 注释）。
-        if !cookie.isEmpty,
-           let warm = await WebOrderFetcher.shared.pddWarmRefetch(cookieHeader: cookie, wait: 6) {
+        // 快路零·现取第一页（只在订单页**已经热着**时走）：借页面刚发的请求删掉 offset 重发一次，约 0.5 秒。
+        // 冷启动不走这条：页面有时根本不发 order_list，会白等（用户 m04124 的 7.8 秒就是这么来的），
+        // 冷启动直接交给下面的快路重放（0.5–1 秒），页面在后台照样会被加载、下一次就是热的。
+        if !cookie.isEmpty, WebOrderFetcher.shared.pddPageIsWarm(),
+           let warm = await WebOrderFetcher.shared.pddWarmRefetch(cookieHeader: cookie, wait: 3) {
             var warmOrders = attachLogistics(PinduoduoParser.parse(text: warm.text, payloadJSON: warm.payload),
                                              payloadJSON: warm.payload)
             // 防御：同一条列表里可能因为「全部」和「待发货」各来一条而重复，按订单号收一次
@@ -1053,7 +1052,9 @@ enum OrderClient {
         guard !urls.isEmpty,
               let capture = try? await WebOrderFetcher.shared.capture(platform: .pdd, urls: urls,
                                                                       cookieHeader: cookie, seconds: 8,
-                                                                      slot: "pdd-bg") else { return [] }
+                                                                      // 用 `pdd` 而不是 `pdd-bg`：顺手把订单页留在前台槽里，
+                                                                      // 下一次手动刷新就能走「借签名现取第一页」（约 0.5 秒）。
+                                                                      slot: "pdd") else { return [] }
         // 页面这次发的是带新 anti_content 的请求，顺手存成新存档，下次快路才不会又拿到空
         _ = PddFast.save(fromPayload: capture.payloadJSON)
         var orders = PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON)
