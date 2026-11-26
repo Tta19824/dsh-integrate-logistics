@@ -728,7 +728,7 @@ enum OrderClient {
         // 快路零·现取第一页（只在订单页**已经热着**时走）：借页面刚发的请求删掉 offset 重发一次，约 0.5 秒。
         // 冷启动不走这条：页面有时根本不发 order_list，会白等（用户 m04124 的 7.8 秒就是这么来的），
         // 冷启动直接交给下面的快路重放（0.5–1 秒），页面在后台照样会被加载、下一次就是热的。
-        if !cookie.isEmpty, WebOrderFetcher.shared.pddPageIsWarm(),
+        if !cookie.isEmpty, await WebOrderFetcher.shared.pddPageIsWarm(),
            let warm = await WebOrderFetcher.shared.pddWarmRefetch(cookieHeader: cookie, wait: 3) {
             var warmOrders = attachLogistics(PinduoduoParser.parse(text: warm.text, payloadJSON: warm.payload),
                                              payloadJSON: warm.payload)
