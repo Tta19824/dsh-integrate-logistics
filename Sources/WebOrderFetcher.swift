@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 import UIKit
 import WebKit
 
@@ -1031,54 +1031,60 @@ final class WebOrderFetcher: NSObject {
     /// 把钥匙串里存的 cookie 灌回 WebView，避免 WebView 自己的存储被系统清过。
     /// 注意：WebView 里已经有的同名 cookie 不覆盖——那里的可能比钥匙串里的新。
     /// 在页面里找到文字完全等于某个标签名的元素并点它。
-    /// 拼多多刷新：让页面**当场**问一次，而不是重放旧快照。
+    /// 拼多多刷新：**换一个新的订单页**再读它自己发回来的第一页订单。
     ///
-    /// 之前试过「点一下标签触发新请求」（~0.8 秒），但实测不可靠：如果那个标签本来就是选中态，
-    /// 页面根本不会发新请求，我们就把上一次的旧响应当成了现在的列表（新下的单因此刷不出来）。
-    /// 所以这里只做一件确定的事：**重新加载订单页**（走缓存，1.5–2.5 秒），
-    /// 让它自己发第一页的 `order_list`（默认「全部」标签，待发货/待收货都在里面）。
+    /// 三次踩坑都记在这里，别再走回去：
+    /// 1. 只点标签不可靠 —— 标签本来就是选中态时页面不发请求，会把旧响应当成现状；
+    /// 2. 整份 `__dshCap` 不能交给解析器 —— 那是一整天累积的抓包（实测拼出 80/110 条）；
+    /// 3. `reload()` 也不可靠 —— WebView 会恢复上次的滚动位置，页面于是先发一条**带 `offset` 游标**
+    ///    的翻页请求，拿回来的是 7 月那批历史单（2026-11-26 实测：`server_time` 是新的，但 10 条
+    ///    全是 `2607xx`，今天新下的单在第一页，而第一页那条请求根本没发）。
     ///
-    /// 只返回**最新那一条** order_list 响应：整份 `__dshCap` 是一整天累积的，
-    /// 拿它去解析会把历史单拼成 80/110 条。
-    func pddWarmRefetch(cookieHeader: String, wait: Double = 6) async -> (payload: String, text: String, reused: Bool)? {
+    /// 所以：丢掉旧槽位、新开一个 WebView 从顶部加载，并且只认**请求体里没有 `offset`** 的那条响应。
+    func pddWarmRefetch(cookieHeader: String, wait: Double = 7) async -> (payload: String, text: String, reused: Bool)? {
         guard !cookieHeader.isEmpty else { return nil }
-        let wv = slots["pdd"] ?? makeWebView(slot: "pdd")
-        await prefillCookies(cookieHeader, platform: .pdd, force: false)
-
-        let href = (try? await wv.evaluateJavaScript("String(location.href)")) as? String ?? ""
-        let warm = href.contains("pinduoduo") && href.contains("order")
-            && Date().timeIntervalSince(loadedAt["pdd"] ?? .distantPast) < 900
-
         guard let url = URL(string: "https://mobile.pinduoduo.com/order.html") else { return nil }
+        let reused = slots["pdd"] != nil
+        slots.removeValue(forKey: "pdd")
+        let wv = makeWebView(slot: "pdd")
+        await prefillCookies(cookieHeader, platform: .pdd, force: false)
         var req = URLRequest(url: url)
         req.setValue(UserAgent.iOS, forHTTPHeaderField: "User-Agent")
-        if warm {
-            wv.reload()
-        } else {
-            _ = await wv.load(req)
-        }
+        _ = await wv.load(req)
         loadedAt["pdd"] = Date()
-        if let hit = await warmNewestEntry(wv, baseline: 0, seconds: wait) {
-            return (hit.payload, hit.text, warm)
-        }
-        return nil
+        guard let hit = await warmNewestEntry(wv, seconds: wait) else { return nil }
+        return (hit.payload, hit.text, reused)
     }
-    /// 等 `baseline` 之后的第一条 order_list 响应，并只把**那一条**交回去
-    private func warmNewestEntry(_ wv: WKWebView, baseline: Int, seconds: Double) async -> (payload: String, text: String)? {
+
+    /// 等页面发回**第一页**的 `order_list`（请求体里没有 `offset` 游标）。
+    /// 等不到第一页就退而取任意一条，免得一次都不给结果。
+    private func warmNewestEntry(_ wv: WKWebView, seconds: Double) async -> (payload: String, text: String)? {
+        func probeJS(requireTop: Bool) -> String {
+            let skip = requireTop ? "if(off){continue}" : ""
+            return """
+            (function(){var a=window.__dshCap||[];var best='';for(var i=0;i<a.length;i++){var e=a[i]||{};var u=String(e.u||'');var b=String(e.b||'');if(u.indexOf('order_list')<0||b.length<200){continue}var off='';try{var j=JSON.parse(String((e.r||{}).d||''));off=String(j.offset||'')}catch(x){};\(skip)best=String(i)}return best})()
+            """
+        }
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: 200_000_000)
-            let probe = """
-            (function(){var a=window.__dshCap||[];for(var i=\(baseline);i<a.length;i++){var e=a[i]||{};var u=String(e.u||'');var b=String(e.b||'');if(u.indexOf('order_list')>=0&&b.length>200){return String(i)}}return ''})()
-            """
-            guard let hit = (try? await wv.evaluateJavaScript(probe)) as? String, !hit.isEmpty else { continue }
-            try? await Task.sleep(nanoseconds: 200_000_000)
-            guard let payload = (try? await wv.evaluateJavaScript("(function(){var a=window.__dshCap||[];var i=\(hit);return i<a.length?JSON.stringify([a[i]]):'[]'})()")) as? String,
-                  payload != "[]" else { continue }
-            let bodyText = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? ""
-            return (payload, bodyText)
+            if let top = (try? await wv.evaluateJavaScript(probeJS(requireTop: true))) as? String, !top.isEmpty {
+                return await entryPayload(wv, index: top)
+            }
+        }
+        if let any = (try? await wv.evaluateJavaScript(probeJS(requireTop: false))) as? String, !any.isEmpty {
+            return await entryPayload(wv, index: any)
         }
         return nil
+    }
+
+    /// 把第 index 条抓包记录单独交回来（整份 `__dshCap` 不能交出去）
+    private func entryPayload(_ wv: WKWebView, index: String) async -> (payload: String, text: String)? {
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        guard let payload = (try? await wv.evaluateJavaScript("(function(){var a=window.__dshCap||[];var i=\(index);return i<a.length?JSON.stringify([a[i]]):'[]'})()")) as? String,
+              payload != "[]" else { return nil }
+        let bodyText = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? ""
+        return (payload, bodyText)
     }
 
     /// 响应里的 `server_time` 有多旧（秒）。认不出来就当「很旧」，宁可重载一次。
