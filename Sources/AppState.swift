@@ -312,6 +312,10 @@ final class AppState: ObservableObject {
         guard !isDisabled(.pdd), !pddResync else { return }
         let hasActive = outcome.orders.contains { $0.status == .paid || $0.status == .shipped }
         guard !hasActive else { return }
+        // 真的没有进行中单时，每一次刷新都去开页面是白耗流量和电：90 秒内只补一次
+        let lastAt = UserDefaults.standard.double(forKey: "pdd_resync_at")
+        guard Date().timeIntervalSince1970 - lastAt > 90 else { return }
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "pdd_resync_at")
         pddResync = true
         Task { [weak self] in
             defer { Task { @MainActor in self?.pddResync = false } }
