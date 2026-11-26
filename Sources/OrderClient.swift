@@ -9,6 +9,8 @@ struct FetchOutcome {
     var payloadJSON: String = ""
     /// 这次抓取是可信的（直连拿到了真实响应），0 条也该覆盖旧数据
     var authoritative: Bool = false
+    /// 快路（重放存档）用的那份存档多少分钟前存的：-1 = 不是快路。存档越旧越可能是「过期签名」的假答案
+    var staleMinutes: Int = -1
 }
 
 enum FetchError: LocalizedError {
@@ -756,7 +758,8 @@ enum OrderClient {
                                            enriched.count, pickupN, Date().timeIntervalSince(started))
                         return FetchOutcome(orders: enriched, httpStatus: 200, byteCount: picked.size,
                                             rawFileURL: self.payloadFile(for: .pdd), note: note0,
-                                            payloadJSON: picked.payload, authoritative: true)
+                                            payloadJSON: picked.payload, authoritative: true,
+                                            staleMinutes: PddFast.newestAgeMinutes())
                     }
                     fastNote += "页内重放 \(picked.orders.count) 条但没有进行中的订单｜"
                     pageFallback = (picked.orders, picked.payload, picked.size)
@@ -832,7 +835,8 @@ enum OrderClient {
                             rawFileURL: self.payloadFile(for: .pdd),
                             note: note,
                             payloadJSON: payload,
-                            authoritative: true
+                            authoritative: true,
+                            staleMinutes: PddFast.newestAgeMinutes()
                         )
                     }
                     if fallback == nil || fastOrders.count > (fallback?.orders.count ?? 0) {
@@ -855,7 +859,8 @@ enum OrderClient {
                         rawFileURL: self.payloadFile(for: .pdd),
                         note: note,
                         payloadJSON: fb.payload,
-                        authoritative: true
+                        authoritative: true,
+                        staleMinutes: PddFast.newestAgeMinutes()
                     )
                 }
             }
@@ -870,7 +875,8 @@ enum OrderClient {
                               enriched.count, pickupCount, Date().timeIntervalSince(started))
             return FetchOutcome(orders: enriched, httpStatus: 200, byteCount: pf.size,
                                 rawFileURL: self.payloadFile(for: .pdd), note: note,
-                                payloadJSON: pf.payload, authoritative: true)
+                                payloadJSON: pf.payload, authoritative: true,
+                                staleMinutes: PddFast.newestAgeMinutes())
         }
 
         let candidates = [
@@ -958,16 +964,49 @@ enum OrderClient {
         )
     }
 
+    /// 退款/取消之后，旧存档还会把那张单当成「待发货」带回来。
+    /// 后台重抓是用页面新签名问的，它里面没有那张单的那一刻，就把它记成「已结束」；
+    /// 之后快路再把它带回来，直接丢掉（7 天后自动过期，避免无限记住）。
+    private static let retiredKey = "pdd_retired"
+
+    static func retiredPddOrders() -> Set<String> {
+        let map = (UserDefaults.standard.dictionary(forKey: retiredKey) as? [String: Double]) ?? [:]
+        let cutoff = Date().timeIntervalSince1970 - 7 * 86400
+        return Set(map.filter { $0.value > cutoff }.keys)
+    }
+
+    static func markPddRetired(_ orderNos: [String]) {
+        guard !orderNos.isEmpty else { return }
+        var map = (UserDefaults.standard.dictionary(forKey: retiredKey) as? [String: Double]) ?? [:]
+        let now = Date().timeIntervalSince1970
+        map = map.filter { $0.value > now - 7 * 86400 }
+        for no in orderNos { map[no] = now }
+        UserDefaults.standard.set(map, forKey: retiredKey)
+    }
+
+    /// 快路是「当时那张快照」：库里已经被后台重抓（新签名）确认成 已取消/退款/完成 的单，
+    /// 不要再按快照里的旧状态显示出来 —— 退款之后还挂在列表里就是这个原因。
+    static func droppingTerminalPerStore(_ orders: [Order], platform: Platform) -> [Order] {
+        let terminal = Set(OrderStore.shared.all()
+            .filter { $0.platform == platform
+                && ($0.status == .cancelled || $0.status == .refunding || $0.status == .completed) }
+            .map { $0.orderNo })
+        guard !terminal.isEmpty else { return orders }
+        return orders.filter { !terminal.contains($0.orderNo) }
+    }
+
     /// 快路/存档重放看到的是「当时那份签名能看到的列表」，它可能比库里少几条——刚下的单就是这样。
     /// 如果拿它的结果整平台覆盖，库里的新单会被抹掉，界面就会「一会儿有一会儿没有」。
     /// 所以覆盖前，把库里还在进行中、且 72 小时内更新过的行补回去；
     /// 确实已经结束的旧行会由后台 `pddSilentRescan` 用页面新签名纠正掉。
-    static func keepingStoredActive(_ orders: [Order], platform: Platform) -> (orders: [Order], kept: Int) {
+    static func keepingStoredActive(_ orders: [Order], platform: Platform,
+                                    excluding: Set<String> = []) -> (orders: [Order], kept: Int) {
         let known = Set(orders.map { $0.orderNo })
         let cutoff = Date().addingTimeInterval(-72 * 3600)
         let keep = OrderStore.shared.all().filter {
             $0.platform == platform
                 && !known.contains($0.orderNo)
+                && !excluding.contains($0.orderNo)
                 && ($0.status == .paid || $0.status == .shipped)
                 && $0.updatedAt > cutoff
         }

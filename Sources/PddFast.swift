@@ -106,6 +106,14 @@ enum PddFast {
         UserDefaults.standard.removeObject(forKey: badKey)
     }
 
+    /// 最新一份存档是多少分钟前存的（没有存档返回 -1）。
+    /// 快路只在存档新鲜时可信：签名过期后服务端会回「空/旧」的答案，而它不报错。
+    static func newestAgeMinutes() -> Int {
+        let list = loadAll()
+        guard let newest = list.map({ $0.savedAt }).max() else { return -1 }
+        return Int((Date().timeIntervalSince1970 - newest) / 60)
+    }
+
     /// 给调试区看的一句话
     static func statusText() -> String {
         let list = loadAll()

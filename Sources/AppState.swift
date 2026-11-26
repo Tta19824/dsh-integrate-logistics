@@ -157,12 +157,21 @@ final class AppState: ObservableObject {
                 var outcome = try await OrderClient.fetch(platform: platform)
                 let rawOrders = outcome.orders
                 if platform == .pdd {
+                    // 库里已被后台重抓确认成 已取消/退款/完成 的单，快路的旧状态不许再显示
+                    outcome.orders = OrderClient.droppingTerminalPerStore(outcome.orders, platform: .pdd)
+                    // 已经退款/取消、后台重抓确认过「不在列表里」的单，快路再带回来也不要
+                    let retired = OrderClient.retiredPddOrders()
+                    if !retired.isEmpty {
+                        outcome.orders = outcome.orders.filter { !retired.contains($0.orderNo) }
+                    }
                     // 快路看不到刚下的单，但不能因此把库里那条抹掉（否则会一会儿有一会儿没有）
-                    let kept = OrderClient.keepingStoredActive(outcome.orders, platform: .pdd)
+                    let kept = OrderClient.keepingStoredActive(outcome.orders, platform: .pdd, excluding: retired)
                     if kept.kept > 0 {
                         outcome.orders = kept.orders
                         outcome.note += "（库里保留 \(kept.kept) 条进行中）"
                     }
+                    // 存档太旧（签名可能已过期）时，即使快路说有进行中单，也值得让页面自己再确认一次
+                    if outcome.staleMinutes >= 10 { outcome.note += "（快路存档 \(outcome.staleMinutes) 分钟前，后台核一遍）" }
                 }
                 if !outcome.orders.isEmpty || outcome.authoritative {
                     OrderStore.shared.replace(platform: platform, with: outcome.orders)
@@ -177,7 +186,8 @@ final class AppState: ObservableObject {
                 }
                 // 判断要不要后台重抓，看的是「快路这次看到了什么」，不是补过库的结果
                 if platform == .pdd {
-                    pddResyncIfNeeded(hasActive: rawOrders.contains { $0.status == .paid || $0.status == .shipped })
+                    pddResyncIfNeeded(hasActive: rawOrders.contains { $0.status == .paid || $0.status == .shipped },
+                                      staleMinutes: outcome.staleMinutes)
                 }
                 show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)")
             } catch {
@@ -320,9 +330,12 @@ final class AppState: ObservableObject {
     /// 拼多多快路只回放旧存档：存档里的 anti_content 是页面当时的签名，
     /// 回放回来「没有待发货/待收货」并不等于现在真的没有（新下的单就是这么被漏掉的）。
     /// 这里在结果出来之后安静地开一次页面重抓，抓到进行中的单就静默换进库 —— 不弹提示。
-    private func pddResyncIfNeeded(hasActive: Bool) {
+    private func pddResyncIfNeeded(hasActive: Bool, staleMinutes: Int = -1) {
         guard !isDisabled(.pdd), !pddResync else { return }
-        guard !hasActive else { return }
+        // 快路说有进行中的单，但存档已经 10 分钟以上：那张单可能刚被退款/取消，
+        // 旧签名还在把它报成待发货 —— 这种情况也要让页面自己核一次。
+        let stale = staleMinutes >= 10
+        guard !hasActive || stale else { return }
         // 真的没有进行中单时，每一次刷新都去开页面是白耗流量和电：90 秒内只补一次
         let lastAt = UserDefaults.standard.double(forKey: "pdd_resync_at")
         guard Date().timeIntervalSince1970 - lastAt > 90 else { return }
@@ -335,6 +348,14 @@ final class AppState: ObservableObject {
             // 否则库里那条「其实已经收货」的进行中旧行会一直挂着（用户 m03369 那类问题）。
             guard !orders.isEmpty else { return }
             await MainActor.run {
+                // 这次是页面用新签名问到的当前列表：刚才还在进行中、这次不见了的单 = 已退款/取消，
+                // 记下来，免得下一次快路又把它当成待发货带回来。
+                let after = Set(orders.map { $0.orderNo })
+                let gone = OrderStore.shared.all()
+                    .filter { $0.platform == .pdd && ($0.status == .paid || $0.status == .shipped) }
+                    .map { $0.orderNo }
+                    .filter { !after.contains($0) }
+                OrderClient.markPddRetired(gone)
                 OrderStore.shared.replace(platform: .pdd, with: orders)
                 self?.reload()
             }
@@ -351,14 +372,19 @@ final class AppState: ObservableObject {
         Task {
             busy = all.first
             // 各平台各自开一个 WebView 并行抓，总耗时取最大值而不是相加
-            let results = await withTaskGroup(of: (Platform, String, Bool).self) { group -> [(Platform, String, Bool)] in
+            let results = await withTaskGroup(of: (Platform, String, Bool, Int).self) { group -> [(Platform, String, Bool, Int)] in
                 for platform in all {
                     group.addTask { @MainActor in
                         do {
                             var outcome = try await OrderClient.fetch(platform: platform)
                             let rawOrders = outcome.orders
                             if platform == .pdd {
-                                let kept = OrderClient.keepingStoredActive(outcome.orders, platform: .pdd)
+                                outcome.orders = OrderClient.droppingTerminalPerStore(outcome.orders, platform: .pdd)
+                                let retired = OrderClient.retiredPddOrders()
+                                if !retired.isEmpty {
+                                    outcome.orders = outcome.orders.filter { !retired.contains($0.orderNo) }
+                                }
+                                let kept = OrderClient.keepingStoredActive(outcome.orders, platform: .pdd, excluding: retired)
                                 if kept.kept > 0 {
                                     outcome.orders = kept.orders
                                     outcome.note += "（库里保留 \(kept.kept) 条进行中）"
@@ -368,18 +394,19 @@ final class AppState: ObservableObject {
                                 OrderStore.shared.replace(platform: platform, with: outcome.orders)
                             }
                             let pddActive = rawOrders.contains { $0.status == .paid || $0.status == .shipped }
-                            return (platform, "\(platform.name)：\(outcome.note)", pddActive)
+                            return (platform, "\(platform.name)：\(outcome.note)", pddActive, outcome.staleMinutes)
                         } catch {
-                            return (platform, "\(platform.name)：\(error.localizedDescription)", false)
+                            return (platform, "\(platform.name)：\(error.localizedDescription)", false, -1)
                         }
                     }
                 }
-                var out: [(Platform, String, Bool)] = []
+                var out: [(Platform, String, Bool, Int)] = []
                 for await item in group { out.append(item) }
                 return out
             }
             if all.contains(.pdd) {
-                pddResyncIfNeeded(hasActive: results.first(where: { $0.0 == .pdd })?.2 ?? false)
+                pddResyncIfNeeded(hasActive: results.first(where: { $0.0 == .pdd })?.2 ?? false,
+                                  staleMinutes: results.first(where: { $0.0 == .pdd })?.3 ?? -1)
             }
             var lines = all.map { p in results.first(where: { $0.0 == p })?.1 ?? "" }
             lines.removeAll { $0.isEmpty }
