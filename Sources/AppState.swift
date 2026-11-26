@@ -186,8 +186,9 @@ final class AppState: ObservableObject {
                 }
                 // 判断要不要后台重抓，看的是「快路这次看到了什么」，不是补过库的结果
                 if platform == .pdd {
-                    pddResyncIfNeeded(hasActive: rawOrders.contains { $0.status == .paid || $0.status == .shipped },
-                                      staleMinutes: outcome.staleMinutes)
+                    let checking = pddResyncIfNeeded(hasActive: rawOrders.contains { $0.status == .paid || $0.status == .shipped },
+                                                     staleMinutes: outcome.staleMinutes)
+                    if checking { outcome.note += "（后台核对中，约 5 秒后自动更正）" }
                 }
                 show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)")
             } catch {
@@ -330,15 +331,17 @@ final class AppState: ObservableObject {
     /// 拼多多快路只回放旧存档：存档里的 anti_content 是页面当时的签名，
     /// 回放回来「没有待发货/待收货」并不等于现在真的没有（新下的单就是这么被漏掉的）。
     /// 这里在结果出来之后安静地开一次页面重抓，抓到进行中的单就静默换进库 —— 不弹提示。
-    private func pddResyncIfNeeded(hasActive: Bool, staleMinutes: Int = -1) {
-        guard !isDisabled(.pdd), !pddResync else { return }
-        // 快路说有进行中的单，但存档已经 10 分钟以上：那张单可能刚被退款/取消，
-        // 旧签名还在把它报成待发货 —— 这种情况也要让页面自己核一次。
-        let stale = staleMinutes >= 10
-        guard !hasActive || stale else { return }
-        // 真的没有进行中单时，每一次刷新都去开页面是白耗流量和电：90 秒内只补一次
+    /// 返回 true 表示「已经排上后台核对了」（用来在 note 里告诉用户再等几秒）
+    @discardableResult
+    private func pddResyncIfNeeded(hasActive: Bool, staleMinutes: Int = -1) -> Bool {
+        guard !isDisabled(.pdd), !pddResync else { return false }
+        // 快路是「当时那张快照」。只要存档超过 1 分钟，无论它说有没有进行中的单，
+        // 都让页面自己再问一次：新下的单、刚退掉的单，都是靠这一次纠正过来的。
+        let stale = staleMinutes >= 1 || staleMinutes < 0
+        guard !hasActive || stale else { return false }
         let lastAt = UserDefaults.standard.double(forKey: "pdd_resync_at")
-        guard Date().timeIntervalSince1970 - lastAt > 90 else { return }
+        // 30 秒地板：连点刷新时不要一次排好几个页面
+        guard Date().timeIntervalSince1970 - lastAt > 30 else { return false }
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "pdd_resync_at")
         pddResync = true
         Task { [weak self] in
@@ -360,6 +363,7 @@ final class AppState: ObservableObject {
                 self?.reload()
             }
         }
+        return true
     }
 
     func refreshAll(quiet: Bool = false) {
