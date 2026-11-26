@@ -732,6 +732,9 @@ enum OrderClient {
            let warm = await WebOrderFetcher.shared.pddWarmRefetch(cookieHeader: cookie, wait: 6) {
             var warmOrders = attachLogistics(PinduoduoParser.parse(text: warm.text, payloadJSON: warm.payload),
                                              payloadJSON: warm.payload)
+            // 防御：同一条列表里可能因为「全部」和「待发货」各来一条而重复，按订单号收一次
+            var seenWarm: Set<String> = []
+            warmOrders = warmOrders.filter { seenWarm.insert($0.orderNo).inserted }
             if !warmOrders.isEmpty {
                 warmOrders = await enrichShipping(warmOrders, cookie: cookie)
                 _ = self.write(warm.payload, to: self.payloadFile(for: .pdd))

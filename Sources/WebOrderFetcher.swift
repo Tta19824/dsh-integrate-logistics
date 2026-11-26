@@ -1031,10 +1031,15 @@ final class WebOrderFetcher: NSObject {
     /// 把钥匙串里存的 cookie 灌回 WebView，避免 WebView 自己的存储被系统清过。
     /// 注意：WebView 里已经有的同名 cookie 不覆盖——那里的可能比钥匙串里的新。
     /// 在页面里找到文字完全等于某个标签名的元素并点它。
-    /// 拼多多「温页面」：把订单页留在内存里，刷新时不重新加载，
-    /// 而是点一下「待发货」/「全部」让页面**当场发一条新的 order_list 请求**。
-    /// 这样拿到的数据是页面用当前 `anti_content` 问出来的（跟淘宝自己算 sign 一个道理），
-    /// 不是重放旧存档里那份过期快照 —— 新下的单、刚退的单都当场就是对的。
+    /// 拼多多刷新：让页面**当场**问一次，而不是重放旧快照。
+    ///
+    /// 之前试过「点一下标签触发新请求」（~0.8 秒），但实测不可靠：如果那个标签本来就是选中态，
+    /// 页面根本不会发新请求，我们就把上一次的旧响应当成了现在的列表（新下的单因此刷不出来）。
+    /// 所以这里只做一件确定的事：**重新加载订单页**（走缓存，1.5–2.5 秒），
+    /// 让它自己发第一页的 `order_list`（默认「全部」标签，待发货/待收货都在里面）。
+    ///
+    /// 只返回**最新那一条** order_list 响应：整份 `__dshCap` 是一整天累积的，
+    /// 拿它去解析会把历史单拼成 80/110 条。
     func pddWarmRefetch(cookieHeader: String, wait: Double = 6) async -> (payload: String, text: String, reused: Bool)? {
         guard !cookieHeader.isEmpty else { return nil }
         let wv = slots["pdd"] ?? makeWebView(slot: "pdd")
@@ -1043,36 +1048,48 @@ final class WebOrderFetcher: NSObject {
         let href = (try? await wv.evaluateJavaScript("String(location.href)")) as? String ?? ""
         let warm = href.contains("pinduoduo") && href.contains("order")
             && Date().timeIntervalSince(loadedAt["pdd"] ?? .distantPast) < 900
-        var baseline = 0
-        if warm {
-            let raw = (try? await wv.evaluateJavaScript("String((window.__dshCap || []).length)")) as? String ?? "0"
-            baseline = Int(raw) ?? 0
-            _ = try? await wv.evaluateJavaScript(clickTabJS(["待发货", "打包中", "全部"]))
-            // 懒加载的列表要先滚一下才会发请求
-            _ = try? await wv.evaluateJavaScript("try{window.scrollTo(0, document.body.scrollHeight)}catch(e){}")
-        } else {
-            guard let url = URL(string: "https://mobile.pinduoduo.com/order.html") else { return nil }
-            var req = URLRequest(url: url)
-            req.setValue(UserAgent.iOS, forHTTPHeaderField: "User-Agent")
-            _ = await wv.load(req)
-            loadedAt["pdd"] = Date()
-            // 冷加载时页面自己就会发 type=all，等它
-        }
 
-        let deadline = Date().addingTimeInterval(wait)
+        guard let url = URL(string: "https://mobile.pinduoduo.com/order.html") else { return nil }
+        var req = URLRequest(url: url)
+        req.setValue(UserAgent.iOS, forHTTPHeaderField: "User-Agent")
+        if warm {
+            wv.reload()
+        } else {
+            _ = await wv.load(req)
+        }
+        loadedAt["pdd"] = Date()
+        if let hit = await warmNewestEntry(wv, baseline: 0, seconds: wait) {
+            return (hit.payload, hit.text, warm)
+        }
+        return nil
+    }
+    /// 等 `baseline` 之后的第一条 order_list 响应，并只把**那一条**交回去
+    private func warmNewestEntry(_ wv: WKWebView, baseline: Int, seconds: Double) async -> (payload: String, text: String)? {
+        let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: 200_000_000)
             let probe = """
-            (function(){var a=window.__dshCap||[];for(var i=\(baseline);i<a.length;i++){var e=a[i]||{};var u=String(e.u||'');var b=String(e.b||'');if(u.indexOf('order_list')>=0&&b.length>200){return '1'}}return ''})()
+            (function(){var a=window.__dshCap||[];for(var i=\(baseline);i<a.length;i++){var e=a[i]||{};var u=String(e.u||'');var b=String(e.b||'');if(u.indexOf('order_list')>=0&&b.length>200){return String(i)}}return ''})()
             """
-            guard let hit = (try? await wv.evaluateJavaScript(probe)) as? String, hit == "1" else { continue }
-            // 让同一批的后续响应也收完（有的会在 200~400ms 内再补一条）
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            let payload = (try? await wv.evaluateJavaScript("JSON.stringify(window.__dshCap || [])")) as? String ?? "[]"
+            guard let hit = (try? await wv.evaluateJavaScript(probe)) as? String, !hit.isEmpty else { continue }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard let payload = (try? await wv.evaluateJavaScript("(function(){var a=window.__dshCap||[];var i=\(hit);return i<a.length?JSON.stringify([a[i]]):'[]'})()")) as? String,
+                  payload != "[]" else { continue }
             let bodyText = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? ""
-            if !payload.isEmpty, payload != "[]" { return (payload, bodyText, warm) }
+            return (payload, bodyText)
         }
         return nil
+    }
+
+    /// 响应里的 `server_time` 有多旧（秒）。认不出来就当「很旧」，宁可重载一次。
+    private func serverTimeAge(_ payload: String) -> Int {
+        guard let re = try? NSRegularExpression(pattern: "\"server_time\"\\s*:\\s*(\\d{9,12})") else { return 9999 }
+        let ns = payload as NSString
+        guard let m = re.firstMatch(in: payload, range: NSRange(location: 0, length: ns.length)),
+              m.numberOfRanges > 1 else { return 9999 }
+        let v = Int(ns.substring(with: m.range(at: 1))) ?? 0
+        guard v > 0 else { return 9999 }
+        return max(0, Int(Date().timeIntervalSince1970) - v)
     }
     private func clickTabJS(_ names: [String]) -> String {
         let list = names.map { "\"\($0)\"" }.joined(separator: ",")
