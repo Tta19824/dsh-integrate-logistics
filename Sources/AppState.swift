@@ -1,4 +1,4 @@
-import SwiftUI
+﻿import SwiftUI
 
 @MainActor
 final class AppState: ObservableObject {
@@ -154,7 +154,16 @@ final class AppState: ObservableObject {
         busy = platform
         Task {
             do {
-                let outcome = try await OrderClient.fetch(platform: platform)
+                var outcome = try await OrderClient.fetch(platform: platform)
+                let rawOrders = outcome.orders
+                if platform == .pdd {
+                    // 快路看不到刚下的单，但不能因此把库里那条抹掉（否则会一会儿有一会儿没有）
+                    let kept = OrderClient.keepingStoredActive(outcome.orders, platform: .pdd)
+                    if kept.kept > 0 {
+                        outcome.orders = kept.orders
+                        outcome.note += "（库里保留 \(kept.kept) 条进行中）"
+                    }
+                }
                 if !outcome.orders.isEmpty || outcome.authoritative {
                     OrderStore.shared.replace(platform: platform, with: outcome.orders)
                 }
@@ -166,7 +175,10 @@ final class AppState: ObservableObject {
                     // 取件码/运单号/轨迹都在老版详情页里，刷新完后台补最近几单
                     if !outcome.orders.isEmpty { enrichJdPickup() }
                 }
-                if platform == .pdd { pddResyncIfNeeded(outcome) }
+                // 判断要不要后台重抓，看的是「快路这次看到了什么」，不是补过库的结果
+                if platform == .pdd {
+                    pddResyncIfNeeded(hasActive: rawOrders.contains { $0.status == .paid || $0.status == .shipped })
+                }
                 show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)")
             } catch {
                 busy = nil
@@ -308,9 +320,8 @@ final class AppState: ObservableObject {
     /// 拼多多快路只回放旧存档：存档里的 anti_content 是页面当时的签名，
     /// 回放回来「没有待发货/待收货」并不等于现在真的没有（新下的单就是这么被漏掉的）。
     /// 这里在结果出来之后安静地开一次页面重抓，抓到进行中的单就静默换进库 —— 不弹提示。
-    private func pddResyncIfNeeded(_ outcome: FetchOutcome) {
+    private func pddResyncIfNeeded(hasActive: Bool) {
         guard !isDisabled(.pdd), !pddResync else { return }
-        let hasActive = outcome.orders.contains { $0.status == .paid || $0.status == .shipped }
         guard !hasActive else { return }
         // 真的没有进行中单时，每一次刷新都去开页面是白耗流量和电：90 秒内只补一次
         let lastAt = UserDefaults.standard.double(forKey: "pdd_resync_at")
@@ -320,7 +331,9 @@ final class AppState: ObservableObject {
         Task { [weak self] in
             defer { Task { @MainActor in self?.pddResync = false } }
             let orders = await OrderClient.pddSilentRescan()
-            guard orders.contains(where: { $0.status == .paid || $0.status == .shipped }) else { return }
+            // 页面这次是带着新签名抓到的，它就是当前事实：哪怕全是已完成的单也要换进去，
+            // 否则库里那条「其实已经收货」的进行中旧行会一直挂着（用户 m03369 那类问题）。
+            guard !orders.isEmpty else { return }
             await MainActor.run {
                 OrderStore.shared.replace(platform: .pdd, with: orders)
                 self?.reload()
@@ -338,23 +351,35 @@ final class AppState: ObservableObject {
         Task {
             busy = all.first
             // 各平台各自开一个 WebView 并行抓，总耗时取最大值而不是相加
-            let results = await withTaskGroup(of: (Platform, String).self) { group -> [(Platform, String)] in
+            let results = await withTaskGroup(of: (Platform, String, Bool).self) { group -> [(Platform, String, Bool)] in
                 for platform in all {
                     group.addTask { @MainActor in
                         do {
-                            let outcome = try await OrderClient.fetch(platform: platform)
+                            var outcome = try await OrderClient.fetch(platform: platform)
+                            let rawOrders = outcome.orders
+                            if platform == .pdd {
+                                let kept = OrderClient.keepingStoredActive(outcome.orders, platform: .pdd)
+                                if kept.kept > 0 {
+                                    outcome.orders = kept.orders
+                                    outcome.note += "（库里保留 \(kept.kept) 条进行中）"
+                                }
+                            }
                             if !outcome.orders.isEmpty {
                                 OrderStore.shared.replace(platform: platform, with: outcome.orders)
                             }
-                            return (platform, "\(platform.name)：\(outcome.note)")
+                            let pddActive = rawOrders.contains { $0.status == .paid || $0.status == .shipped }
+                            return (platform, "\(platform.name)：\(outcome.note)", pddActive)
                         } catch {
-                            return (platform, "\(platform.name)：\(error.localizedDescription)")
+                            return (platform, "\(platform.name)：\(error.localizedDescription)", false)
                         }
                     }
                 }
-                var out: [(Platform, String)] = []
+                var out: [(Platform, String, Bool)] = []
                 for await item in group { out.append(item) }
                 return out
+            }
+            if all.contains(.pdd) {
+                pddResyncIfNeeded(hasActive: results.first(where: { $0.0 == .pdd })?.2 ?? false)
             }
             var lines = all.map { p in results.first(where: { $0.0 == p })?.1 ?? "" }
             lines.removeAll { $0.isEmpty }

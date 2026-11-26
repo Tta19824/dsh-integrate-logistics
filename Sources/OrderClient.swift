@@ -958,6 +958,22 @@ enum OrderClient {
         )
     }
 
+    /// 快路/存档重放看到的是「当时那份签名能看到的列表」，它可能比库里少几条——刚下的单就是这样。
+    /// 如果拿它的结果整平台覆盖，库里的新单会被抹掉，界面就会「一会儿有一会儿没有」。
+    /// 所以覆盖前，把库里还在进行中、且 72 小时内更新过的行补回去；
+    /// 确实已经结束的旧行会由后台 `pddSilentRescan` 用页面新签名纠正掉。
+    static func keepingStoredActive(_ orders: [Order], platform: Platform) -> (orders: [Order], kept: Int) {
+        let known = Set(orders.map { $0.orderNo })
+        let cutoff = Date().addingTimeInterval(-72 * 3600)
+        let keep = OrderStore.shared.all().filter {
+            $0.platform == platform
+                && !known.contains($0.orderNo)
+                && ($0.status == .paid || $0.status == .shipped)
+                && $0.updatedAt > cutoff
+        }
+        return (orders + keep, keep.count)
+    }
+
     /// 快路回放的是旧存档，看不到刚下的单：存档里的 `anti_content` 是页面当时的签名，
     /// 重放回来那份「待发货 0 条」并不等于现在真的没有（2026-11-26 实测：新下的待发货单
     /// 在重放里是 `{"orders":[],"harmony_empty_height_and_back_refresh":"1"}`）。
