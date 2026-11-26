@@ -338,7 +338,9 @@ final class AppState: ObservableObject {
         // 快路是「当时那张快照」。只要存档超过 1 分钟，无论它说有没有进行中的单，
         // 都让页面自己再问一次：新下的单、刚退掉的单，都是靠这一次纠正过来的。
         let stale = staleMinutes >= 1 || staleMinutes < 0
-        guard !hasActive || stale else { return false }
+        // 温页面刚抓过（staleMinutes == 0）就是当下数据，不用再核；
+        // 其余情况（重放旧存档 / 未知年龄）都核一次，别去猜 hasActive 准不准。
+        guard stale else { return false }
         let lastAt = UserDefaults.standard.double(forKey: "pdd_resync_at")
         // 30 秒地板：连点刷新时不要一次排好几个页面
         guard Date().timeIntervalSince1970 - lastAt > 30 else { return false }

@@ -1031,6 +1031,49 @@ final class WebOrderFetcher: NSObject {
     /// 把钥匙串里存的 cookie 灌回 WebView，避免 WebView 自己的存储被系统清过。
     /// 注意：WebView 里已经有的同名 cookie 不覆盖——那里的可能比钥匙串里的新。
     /// 在页面里找到文字完全等于某个标签名的元素并点它。
+    /// 拼多多「温页面」：把订单页留在内存里，刷新时不重新加载，
+    /// 而是点一下「待发货」/「全部」让页面**当场发一条新的 order_list 请求**。
+    /// 这样拿到的数据是页面用当前 `anti_content` 问出来的（跟淘宝自己算 sign 一个道理），
+    /// 不是重放旧存档里那份过期快照 —— 新下的单、刚退的单都当场就是对的。
+    func pddWarmRefetch(cookieHeader: String, wait: Double = 6) async -> (payload: String, text: String, reused: Bool)? {
+        guard !cookieHeader.isEmpty else { return nil }
+        let wv = slots["pdd"] ?? makeWebView(slot: "pdd")
+        await prefillCookies(cookieHeader, platform: .pdd, force: false)
+
+        let href = (try? await wv.evaluateJavaScript("String(location.href)")) as? String ?? ""
+        let warm = href.contains("pinduoduo") && href.contains("order")
+            && Date().timeIntervalSince(loadedAt["pdd"] ?? .distantPast) < 900
+        var baseline = 0
+        if warm {
+            let raw = (try? await wv.evaluateJavaScript("String((window.__dshCap || []).length)")) as? String ?? "0"
+            baseline = Int(raw) ?? 0
+            _ = try? await wv.evaluateJavaScript(clickTabJS(["待发货", "打包中", "全部"]))
+            // 懒加载的列表要先滚一下才会发请求
+            _ = try? await wv.evaluateJavaScript("try{window.scrollTo(0, document.body.scrollHeight)}catch(e){}")
+        } else {
+            guard let url = URL(string: "https://mobile.pinduoduo.com/order.html") else { return nil }
+            var req = URLRequest(url: url)
+            req.setValue(UserAgent.iOS, forHTTPHeaderField: "User-Agent")
+            _ = await wv.load(req)
+            loadedAt["pdd"] = Date()
+            // 冷加载时页面自己就会发 type=all，等它
+        }
+
+        let deadline = Date().addingTimeInterval(wait)
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            let probe = """
+            (function(){var a=window.__dshCap||[];for(var i=\(baseline);i<a.length;i++){var e=a[i]||{};var u=String(e.u||'');var b=String(e.b||'');if(u.indexOf('order_list')>=0&&b.length>200){return '1'}}return ''})()
+            """
+            guard let hit = (try? await wv.evaluateJavaScript(probe)) as? String, hit == "1" else { continue }
+            // 让同一批的后续响应也收完（有的会在 200~400ms 内再补一条）
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            let payload = (try? await wv.evaluateJavaScript("JSON.stringify(window.__dshCap || [])")) as? String ?? "[]"
+            let bodyText = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? ""
+            if !payload.isEmpty, payload != "[]" { return (payload, bodyText, warm) }
+        }
+        return nil
+    }
     private func clickTabJS(_ names: [String]) -> String {
         let list = names.map { "\"\($0)\"" }.joined(separator: ",")
         return """

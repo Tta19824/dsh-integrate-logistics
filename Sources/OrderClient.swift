@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 
 struct FetchOutcome {
     var orders: [Order]
@@ -725,6 +725,27 @@ enum OrderClient {
     private static func fetchPinduoduo(cookie: String) async throws -> FetchOutcome {
         let started = Date()
 
+        // 快路零·温页面：订单页如果还活着，就让它当场再问一次自己（约 1 秒）。
+        // 这是唯一「数据一定是现在的」的路线 —— 重放旧存档只是当时的快照，
+        // 新下的单、刚退掉的单在快照里都还是旧状态（用户 m03735 遇到的正是这个）。
+        if !cookie.isEmpty,
+           let warm = await WebOrderFetcher.shared.pddWarmRefetch(cookieHeader: cookie, wait: 6) {
+            var warmOrders = attachLogistics(PinduoduoParser.parse(text: warm.text, payloadJSON: warm.payload),
+                                             payloadJSON: warm.payload)
+            if !warmOrders.isEmpty {
+                warmOrders = await enrichShipping(warmOrders, cookie: cookie)
+                _ = self.write(warm.payload, to: self.payloadFile(for: .pdd))
+                // 页面这次发的是带新签名（anti_content）的请求，存下来，下次重放才不会又拿旧答案
+                _ = PddFast.save(fromPayload: warm.payload)
+                let pickupCount = warmOrders.filter { !$0.pickupCode.isEmpty }.count
+                let note = String(format: "页面现取 %d 条（%@），取件码 %d 单 · 用时 %.1f 秒",
+                                  warmOrders.count, warm.reused ? "温页面" : "冷加载", pickupCount,
+                                  Date().timeIntervalSince(started))
+                return FetchOutcome(orders: warmOrders, httpStatus: 200, byteCount: warm.payload.count,
+                                    rawFileURL: self.payloadFile(for: .pdd), note: note,
+                                    payloadJSON: warm.payload, authoritative: true, staleMinutes: 0)
+            }
+        }
         // 快路：之前抓到过 order_list 请求，直接重放，不开 WebView。
         // 页面会发好几条（默认/待发货/待收货），有的返回空列表，所以逐份试。
         var fastNote = "快路："
