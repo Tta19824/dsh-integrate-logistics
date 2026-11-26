@@ -1031,17 +1031,19 @@ final class WebOrderFetcher: NSObject {
     /// 把钥匙串里存的 cookie 灌回 WebView，避免 WebView 自己的存储被系统清过。
     /// 注意：WebView 里已经有的同名 cookie 不覆盖——那里的可能比钥匙串里的新。
     /// 在页面里找到文字完全等于某个标签名的元素并点它。
-    /// 拼多多刷新：在订单页上**依次点标签**（待发货 → 待收货 → 全部），只收这次新发出的请求。
+    /// 拼多多刷新：先借页面现算的签名把**第一页**问一次，不行再点标签兜底。
     ///
-    /// 四次踩坑都记在这里，别再走回去：
+    /// 五次踩坑都记在这里，别再走回去：
     /// 1. 只点「本来就选中」的标签不发请求 → 把旧响应当成了现状；
     /// 2. 整份 `__dshCap` 不能交给解析器（一整天累积，实测拼出 80/110 条）；
     /// 3. `reload()` 会恢复滚动位置 → 页面先发一条带 `offset` 游标的翻页请求，拿回 7 月那批旧单
     ///    （`payload_pdd(4)/(5)` 实证：`server_time` 新鲜、10 条全是 `2607xx`）；
-    /// 4. 就算新开 WebView，页面也会从上次记住的游标继续往下翻 —— 不能指望它「自己发第一页」。
+    /// 4. 新开 WebView 也一样 —— 游标是页面自己持久化的，照样从旧游标往下翻；
+    /// 5. 点标签能出数据（0.36.39 实测「现在能刷出来了」），但要点三次、等 6 秒，太慢。
     ///
-    /// 标签切换是**状态变化**，页面必须重新请求：待发货 / 待收货 正是 App 要显示的那两类，
-    /// 而且这两条请求不带 `offset`。只收请求体里没有 `offset` 的新响应；等不到再退而取最新一条兜底。
+    /// 所以 0.36.40 起：**拿页面刚才发的那条请求当模板，删掉 `offset`、`page` 归 1，在同源 fetch 里重发一次**
+    /// （`anti_content` 是页面刚算的，能过；同源不会 CORS）。约 0.5 秒拿到第一页。
+    /// 失败才退回 0.36.39 的「依次点标签」。
     func pddWarmRefetch(cookieHeader: String, wait: Double = 6) async -> (payload: String, text: String, reused: Bool)? {
         guard !cookieHeader.isEmpty else { return nil }
         guard let url = URL(string: "https://mobile.pinduoduo.com/order.html") else { return nil }
@@ -1056,16 +1058,48 @@ final class WebOrderFetcher: NSObject {
             req.setValue(UserAgent.iOS, forHTTPHeaderField: "User-Agent")
             _ = await wv.load(req)
             loadedAt["pdd"] = Date()
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            // 等页面自己先打一次 order_list（哪怕它带 offset）—— 我们要的是它的 URL/头/签名当模板
+            let coldDeadline = Date().addingTimeInterval(6)
+            while Date() < coldDeadline {
+                let hasEntry = (try? await wv.evaluateJavaScript("(function(){var a=window.__dshCap||[];for(var i=0;i<a.length;i++){var u=String((a[i]||{}).u||'');if(u.indexOf('order_list')>=0){return '1'}}return ''})()")) as? String == "1"
+                if hasEntry { break }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
         }
+
+        // ① 最快的一条路（约 0.5 秒）：借模板请求重发第一页
+        if let hit = await pddFirstPageRefetch(wv, seconds: 4) {
+            return (hit.payload, hit.text, warm)
+        }
+
+        // ② 退路：依次点三个标签，只要其中一次造成状态变化，页面就必须问一次服务端
         let baseline = await entryCount(wv)
-        // 依次点三个标签：只要其中一次造成状态变化，页面就必须问一次服务端
         for name in ["待发货", "待收货", "全部"] {
             _ = try? await wv.evaluateJavaScript(clickTabJS([name]))
             try? await Task.sleep(nanoseconds: 260_000_000)
         }
         guard let hit = await warmNewestEntry(wv, baseline: baseline, seconds: wait) else { return nil }
         return (hit.payload, hit.text, warm)
+    }
+
+    /// 用页面自己刚发出的那条 `order_list` 当模板：删掉 `offset`、`page` 归 1，在页面里同源重发一次。
+    /// 返回的 payload 是「一条抓包记录」的形状，交给 `PinduoduoParser` 和原来完全一致。
+    private func pddFirstPageRefetch(_ wv: WKWebView, seconds: Double) async -> (payload: String, text: String)? {
+        let kick = """
+        (function(){var a=window.__dshCap||[];var e=null;for(var i=a.length-1;i>=0;i--){var x=a[i]||{};var u=String(x.u||'');if(u.indexOf('order_list')>=0&&String(x.b||'').length>200){e=x;break}}if(!e){return 'NO_ENTRY'}var body=String((e.r||{}).d||'');var bad=false;try{var j=JSON.parse(body);delete j.offset;j.page=1;body=JSON.stringify(j)}catch(err){bad=true}if(bad){return 'NO_BODY'}window.__dshFirstPage='';fetch(e.u,{method:String((e.r||{}).m||'POST'),headers:{'Content-Type':'application/json'},body:body,credentials:'include'}).then(function(r){return r.text()}).then(function(t){try{window.__dshFirstPage=JSON.stringify([{u:e.u,m:'POST',h:{},d:body,b:t}])}catch(err){window.__dshFirstPage='ERR'+err}}).catch(function(err){window.__dshFirstPage='ERR'+err});return 'SENT'})()
+        """
+        guard let kickRes = (try? await wv.evaluateJavaScript(kick)) as? String, kickRes == "SENT" else { return nil }
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard let payload = (try? await wv.evaluateJavaScript("String(window.__dshFirstPage||'')")) as? String,
+                  payload.count > 10 else { continue }
+            if payload.hasPrefix("ERR") { return nil }
+            guard payload.contains("\"orders\"") else { return nil }
+            let bodyText = (try? await wv.evaluateJavaScript("document.body ? (document.body.innerText || '') : ''")) as? String ?? ""
+            return (payload, bodyText)
+        }
+        return nil
     }
 
     /// 收「`baseline` 之后、请求体里没有 `offset`」的 order_list 响应；

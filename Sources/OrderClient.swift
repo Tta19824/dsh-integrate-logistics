@@ -743,7 +743,7 @@ enum OrderClient {
                 _ = PddFast.save(fromPayload: warm.payload)
                 let pickupCount = warmOrders.filter { !$0.pickupCode.isEmpty }.count
                 let note = String(format: "页面现取 %d 条（%@），取件码 %d 单 · 用时 %.1f 秒",
-                                  warmOrders.count, warm.reused ? "点标签现取" : "新开页面现取", pickupCount,
+                                  warmOrders.count, warm.reused ? "现取第一页" : "新开页面现取", pickupCount,
                                   Date().timeIntervalSince(started))
                 return FetchOutcome(orders: warmOrders, httpStatus: 200, byteCount: warm.payload.count,
                                     rawFileURL: self.payloadFile(for: .pdd), note: note,
