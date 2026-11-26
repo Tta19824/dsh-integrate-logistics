@@ -719,6 +719,8 @@ enum OrderClient {
         // 快路：之前抓到过 order_list 请求，直接重放，不开 WebView。
         // 页面会发好几条（默认/待发货/待收货），有的返回空列表，所以逐份试。
         var fastNote = "快路："
+        // 页内重放拿到的「没有进行中」那份：同样算当前数据，留着当兜底，别掉回 WebView
+        var pageFallback: (orders: [Order], payload: String, size: Int)?
         // 快路零：页面还开着的话，直接在页面里把候选请求重放一遍，挑出「有进行中订单」的那份
         if !cookie.isEmpty {
             let replay = await WebOrderFetcher.shared.inPageReplayBodies(slot: "pdd", urlContains: "order_list")
@@ -750,61 +752,118 @@ enum OrderClient {
                                             payloadJSON: picked.payload, authoritative: true)
                     }
                     fastNote += "页内重放 \(picked.orders.count) 条但没有进行中的订单｜"
+                    pageFallback = (picked.orders, picked.payload, picked.size)
                 }
             }
         }
         if cookie.isEmpty {
             fastNote += "没有 cookie"
         } else {
-            let saves = PddFast.loadAll()
-            if saves.isEmpty {
+            let all = PddFast.loadAll()
+            let saves = all.filter { !PddFast.isKnownBad($0.body) }
+            if all.isEmpty {
                 fastNote += "无存档"
+            } else if saves.isEmpty {
+                fastNote += "\(all.count) 份存档都试过且无效（15 分钟内不再试）"
             } else {
-                for (index, saved) in saves.enumerated() {
-                    guard let result = await PddFast.replay(saved, cookie: cookie) else {
-                        fastNote += (fastNote.count > 3 ? "｜" : "") + "第 \(index + 1) 份重放失败（网络）"
+                // 六份存档并行重放。以前是串行，全失败时光挨个等就是四五秒，
+                // 等完还得再开 WebView ——「没订单时刷新特别慢」主要就是这一段。
+                let results = await withTaskGroup(of: (index: Int, status: Int, text: String).self) { group -> [(index: Int, status: Int, text: String)] in
+                    for (index, saved) in saves.enumerated() {
+                        group.addTask {
+                            let r = await PddFast.replay(saved, cookie: cookie)
+                            return (index, r?.status ?? -1, r?.text ?? "")
+                        }
+                    }
+                    var out: [(index: Int, status: Int, text: String)] = []
+                    for await item in group { out.append(item) }
+                    return out.sorted { $0.index < $1.index }
+                }
+
+                // 没有「进行中」的那份不是错误：重放打的是线上接口，拿到的就是当前数据，
+                // 只是这账号确实没有待发货/待收货了。留作兜底，省掉后面 7 秒的 WebView。
+                var fallback: (orders: [Order], payload: String, text: String, index: Int)?
+
+                for item in results {
+                    let index = item.index
+                    let saved = saves[index]
+                    let sep = fastNote.count > 3 ? "｜" : ""
+                    guard item.status == 200 else {
+                        // 只把「服务器明确回了非 200」的存档记成无效；网络抖动下次还得试
+                        if item.status > 0 { PddFast.markBad(saved.body) }
+                        fastNote += sep + "第 \(index + 1) 份重放失败（\(item.status < 0 ? "网络" : "HTTP \(item.status)")）"
                         continue
                     }
-                    if result.status != 200 {
-                        fastNote += (fastNote.count > 3 ? "｜" : "") + "第 \(index + 1) 份重放 HTTP \(result.status)"
+                    let text = item.text
+                    if text.contains("harmony_empty_height_and_back_refresh") {
+                        // 页面用来「确认有没有新数据」的探针请求，永远返回空，跳过
+                        PddFast.markBad(saved.body)
+                        fastNote += sep + "第 \(index + 1) 份是探针请求"
                         continue
                     }
-                    _ = self.write(result.text, to: PddFast.responseFile())
-                    if result.text.contains("harmony_empty_height_and_back_refresh") {
-                        // 这是页面用来「确认有没有新数据」的探针请求，永远返回空，跳过
-                        fastNote += (fastNote.count > 3 ? "｜" : "") + "第 \(index + 1) 份是探针请求"
+                    guard fastOk(text) else {
+                        // 60 字节这类拦截 JSON 下次别再试了
+                        if text.count < 400 { PddFast.markBad(saved.body) }
+                        fastNote += sep + "第 \(index + 1) 份重放 \(text.count) 字节但不是订单 JSON"
                         continue
                     }
-                    guard fastOk(result.text) else {
-                        fastNote += (fastNote.count > 3 ? "｜" : "") + "第 \(index + 1) 份重放 \(result.text.count) 字节但不是订单 JSON"
-                        continue
-                    }
-                    let payload = PddFast.payloadJSON(url: saved.url, body: result.text)
-                    var fastOrders = attachLogistics(PinduoduoParser.parse(text: "", payloadJSON: payload), payloadJSON: payload)
-                    // 0 条也算有效结果（比如东西全取完了，确实没有进行中的订单），
-                    // 否则「取完快递」之后每次刷新都会掉回 WebView 的 7 秒。
+                    let payload = PddFast.payloadJSON(url: saved.url, body: text)
+                    let fastOrders = attachLogistics(PinduoduoParser.parse(text: "", payloadJSON: payload), payloadJSON: payload)
                     let hasActive = fastOrders.contains { $0.status == .paid || $0.status == .shipped }
-                    if !fastOrders.isEmpty && !hasActive {
-                        fastNote += (fastNote.count > 3 ? "｜" : "") + "第 \(index + 1) 份返回 \(fastOrders.count) 条但都不是待发货/待收货"
-                        continue
+                    if hasActive {
+                        let enriched = await enrichShipping(fastOrders, cookie: cookie)
+                        _ = self.write(payload, to: self.payloadFile(for: .pdd))
+                        _ = self.write(text, to: PddFast.responseFile())
+                        let pickupCount = enriched.filter { !$0.pickupCode.isEmpty }.count
+                        let note = String(format: "直连重放 %d 条订单，取件码 %d 单，用了第 %d/%d 份存档 · 用时 %.1f 秒",
+                                          enriched.count, pickupCount, index + 1, saves.count,
+                                          Date().timeIntervalSince(started))
+                        return FetchOutcome(
+                            orders: enriched,
+                            httpStatus: 200,
+                            byteCount: text.count,
+                            rawFileURL: self.payloadFile(for: .pdd),
+                            note: note,
+                            payloadJSON: payload,
+                            authoritative: true
+                        )
                     }
-                    fastOrders = await enrichShipping(fastOrders, cookie: cookie)
-                    _ = self.write(payload, to: self.payloadFile(for: .pdd))
-                    let pickupCount = fastOrders.filter { !$0.pickupCode.isEmpty }.count
-                    let note = String(format: "直连重放 %d 条订单，取件码 %d 单，用了第 %d/%d 份存档 · 用时 %.1f 秒",
-                                      fastOrders.count, pickupCount, index + 1, saves.count,
-                                      Date().timeIntervalSince(started))
+                    if fallback == nil || fastOrders.count > (fallback?.orders.count ?? 0) {
+                        fallback = (fastOrders, payload, text, index)
+                    }
+                    fastNote += sep + "第 \(index + 1) 份返回 \(fastOrders.count) 条但没有进行中"
+                }
+
+                if let fb = fallback {
+                    let enriched = await enrichShipping(fb.orders, cookie: cookie)
+                    _ = self.write(fb.payload, to: self.payloadFile(for: .pdd))
+                    _ = self.write(fb.text, to: PddFast.responseFile())
+                    let pickupCount = enriched.filter { !$0.pickupCode.isEmpty }.count
+                    let note = String(format: "直连重放 %d 条（没有待发货/待收货），取件码 %d 单 · 用时 %.1f 秒",
+                                      enriched.count, pickupCount, Date().timeIntervalSince(started))
                     return FetchOutcome(
-                        orders: fastOrders,
+                        orders: enriched,
                         httpStatus: 200,
-                        byteCount: result.text.count,
+                        byteCount: fb.text.count,
                         rawFileURL: self.payloadFile(for: .pdd),
                         note: note,
-                        payloadJSON: payload,
+                        payloadJSON: fb.payload,
                         authoritative: true
                     )
                 }
             }
+        }
+
+        // 前面所有快路都只拿到「没有进行中」的数据：那就是当前答案，
+        // 别再去开 WebView 等七八秒（用户说的「没订单时刷新特别慢」就是这一段）。
+        if let pf = pageFallback {
+            let enriched = await enrichShipping(pf.orders, cookie: cookie)
+            let pickupCount = enriched.filter { !$0.pickupCode.isEmpty }.count
+            let note = String(format: "页内重放 %d 条（没有待发货/待收货），取件码 %d 单 · 用时 %.1f 秒",
+                              enriched.count, pickupCount, Date().timeIntervalSince(started))
+            return FetchOutcome(orders: enriched, httpStatus: 200, byteCount: pf.size,
+                                rawFileURL: self.payloadFile(for: .pdd), note: note,
+                                payloadJSON: pf.payload, authoritative: true)
         }
 
         let candidates = [
@@ -814,7 +873,7 @@ enum OrderClient {
 
         guard !candidates.isEmpty else { throw FetchError.badURL }
 
-        let capture = try await WebOrderFetcher.shared.capture(platform: .pdd, urls: candidates, cookieHeader: cookie, seconds: 15, slot: "pdd")
+        let capture = try await WebOrderFetcher.shared.capture(platform: .pdd, urls: candidates, cookieHeader: cookie, seconds: 10, slot: "pdd")
 
         // 平台会在打开页面时轮换登录 token，抓完把最新的写回钥匙串，下次就不用重新登录
         if !capture.cookieHeader.isEmpty, CookieStore.hasLogin(capture.cookieHeader, platform: .pdd),

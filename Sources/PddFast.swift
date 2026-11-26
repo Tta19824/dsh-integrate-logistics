@@ -61,6 +61,13 @@ enum PddFast {
         if let encoded = try? JSONEncoder().encode(picked) {
             try? encoded.write(to: file(), options: .atomic)
         }
+        // 刚存进来的这几份是「刚刚验证过有 order_sn」的，把黑名单里同 body 的旧标记摘掉，
+        // 否则新存档会被自己 15 分钟前的标记挡住。
+        if added > 0 {
+            var bad = badMap()
+            for s in picked { bad.removeValue(forKey: s.body) }
+            UserDefaults.standard.set(bad, forKey: badKey)
+        }
         return added
     }
 
@@ -68,6 +75,35 @@ enum PddFast {
         guard let data = try? Data(contentsOf: file()) else { return [] }
         guard let list = try? JSONDecoder().decode([Saved].self, from: data) else { return [] }
         return list
+    }
+
+    // MARK: - 无效存档的短期黑名单
+    //
+    // 实测：存档放久了，重放会变成 60 字节的拦截 JSON 或页面那个「探针」空响应。
+    // 每次刷新都把这 6 份挨个试一遍，光白等就是四五秒；更要命的是试完还得开 WebView。
+    // 这里给「重放已验证无效」的 body 打个短期标记，15 分钟内不再试它。
+    private static let badKey = "pdd_bad_bodies"
+    private static let badTTL: Double = 15 * 60
+
+    private static func badMap() -> [String: Double] {
+        UserDefaults.standard.dictionary(forKey: badKey) as? [String: Double] ?? [:]
+    }
+
+    static func isKnownBad(_ body: String) -> Bool {
+        guard let t = badMap()[body] else { return false }
+        return Date().timeIntervalSince1970 - t < badTTL
+    }
+
+    static func markBad(_ body: String) {
+        var map = badMap()
+        let now = Date().timeIntervalSince1970
+        map = map.filter { now - $0.value < badTTL }
+        map[body] = now
+        UserDefaults.standard.set(map, forKey: badKey)
+    }
+
+    static func clearBadMarks() {
+        UserDefaults.standard.removeObject(forKey: badKey)
     }
 
     /// 给调试区看的一句话
@@ -90,7 +126,7 @@ enum PddFast {
         guard let url = URL(string: saved.url) else { return nil }
         var r = URLRequest(url: url)
         r.httpMethod = saved.method
-        r.timeoutInterval = 20
+        r.timeoutInterval = 8
         let skip: Set<String> = ["cookie", "content-length", "host", "connection", "accept-encoding"]
         for (k, v) in saved.headers where !skip.contains(k.lowercased()) {
             r.setValue(v, forHTTPHeaderField: k)
