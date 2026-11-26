@@ -20,6 +20,8 @@ final class AppState: ObservableObject {
     @Published var jdBlocked: Bool = false
     /// 后台补京东取件码的时候不要并发开第二个 WebView
     private var jdPickupBusy = false
+    /// 拼多多「快路说没有单、于是后台重抓一次」的并发闸门
+    private var pddResync = false
     /// 「体检」按钮是否正在跑（防止连点开出两个 WebView）
     @Published var probing = false
 
@@ -164,6 +166,7 @@ final class AppState: ObservableObject {
                     // 取件码/运单号/轨迹都在老版详情页里，刷新完后台补最近几单
                     if !outcome.orders.isEmpty { enrichJdPickup() }
                 }
+                if platform == .pdd { pddResyncIfNeeded(outcome) }
                 show("\(platform.name)：HTTP \(outcome.httpStatus)，\(outcome.byteCount) 字节，\(outcome.note)")
             } catch {
                 busy = nil
@@ -300,6 +303,25 @@ final class AppState: ObservableObject {
         let age = Date().timeIntervalSince1970 - last
         guard last == 0 || age > Double(minutes * 60) else { return }
         refreshAll(quiet: true)
+    }
+
+    /// 拼多多快路只回放旧存档：存档里的 anti_content 是页面当时的签名，
+    /// 回放回来「没有待发货/待收货」并不等于现在真的没有（新下的单就是这么被漏掉的）。
+    /// 这里在结果出来之后安静地开一次页面重抓，抓到进行中的单就静默换进库 —— 不弹提示。
+    private func pddResyncIfNeeded(_ outcome: FetchOutcome) {
+        guard !isDisabled(.pdd), !pddResync else { return }
+        let hasActive = outcome.orders.contains { $0.status == .paid || $0.status == .shipped }
+        guard !hasActive else { return }
+        pddResync = true
+        Task { [weak self] in
+            defer { Task { @MainActor in self?.pddResync = false } }
+            let orders = await OrderClient.pddSilentRescan()
+            guard orders.contains(where: { $0.status == .paid || $0.status == .shipped }) else { return }
+            await MainActor.run {
+                OrderStore.shared.replace(platform: .pdd, with: orders)
+                self?.reload()
+            }
+        }
     }
 
     func refreshAll(quiet: Bool = false) {

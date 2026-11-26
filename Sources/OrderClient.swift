@@ -958,6 +958,30 @@ enum OrderClient {
         )
     }
 
+    /// 快路回放的是旧存档，看不到刚下的单：存档里的 `anti_content` 是页面当时的签名，
+    /// 重放回来那份「待发货 0 条」并不等于现在真的没有（2026-11-26 实测：新下的待发货单
+    /// 在重放里是 `{"orders":[],"harmony_empty_height_and_back_refresh":"1"}`）。
+    /// 所以快路给出「没有进行中」之后，安静地开一次页面、用它自己新发的请求重抓一遍。
+    /// 注意：这一路不弹任何提示 —— 用户明确说过「点完刷新结果都出来了，过几秒又冒一条」很烦。
+    static func pddSilentRescan() async -> [Order] {
+        let cookie = CookieStore.load(for: .pdd) ?? ""
+        guard !cookie.isEmpty else { return [] }
+        let urls = [
+            "https://mobile.pinduoduo.com/order.html",
+            "https://mobile.yangkeduo.com/orders.html"
+        ].compactMap { URL(string: $0) }
+        guard !urls.isEmpty,
+              let capture = try? await WebOrderFetcher.shared.capture(platform: .pdd, urls: urls,
+                                                                      cookieHeader: cookie, seconds: 8,
+                                                                      slot: "pdd-bg") else { return [] }
+        // 页面这次发的是带新 anti_content 的请求，顺手存成新存档，下次快路才不会又拿到空
+        _ = PddFast.save(fromPayload: capture.payloadJSON)
+        var orders = PinduoduoParser.parse(text: capture.text, payloadJSON: capture.payloadJSON)
+        orders = PinduoduoParser.applyCards(orders, cardsJSON: capture.cardsJSON)
+        orders = await enrichShipping(orders, cookie: capture.cookieHeader.isEmpty ? cookie : capture.cookieHeader)
+        return orders
+    }
+
     /// 直接请求同一个订单页，换三种 UA，看谁能让服务端直接吐出订单
     private static func probeUserAgents(cookie: String, url: URL) async -> [String] {
         let uas: [(String, String)] = [
