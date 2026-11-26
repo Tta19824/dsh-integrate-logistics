@@ -458,8 +458,15 @@ enum OrderClient {
             throw FetchError.note("京东电脑版已登录，但订单页里没解析到订单（\(pc.diag)）—— 发「调试 · 抓取文件 → 京东 → 电脑版列表」给我")
         }
         // 电脑版只列近 3 个月，库里以前抓到的历史单不要丢：新结果打头，老单按订单号补在后面。
+        // 但要排掉两类「已经在线上列表里消失、却还带着旧状态」的行：
+        // 一是带取件码的待收货单（多半已经取走了）；二是任何终态词的单子。
         let known = Set(pc.orders.map { $0.orderNo })
-        let history = OrderStore.shared.all().filter { $0.platform == .jd && !known.contains($0.orderNo) }
+        let history = OrderStore.shared.all().filter { row in
+            guard row.platform == .jd, !known.contains(row.orderNo) else { return false }
+            if row.status == .completed || row.status == .cancelled || row.status == .refunding { return false }
+            if !row.pickupCode.isEmpty && row.status == .shipped { return false }
+            return true
+        }
         let merged = pc.orders + history
         let cost = String(format: "%.1f", Date().timeIntervalSince(started))
         dump.append("【采用电脑版】\(pc.orders.count) 条（主路）＋历史 \(history.count) 条")

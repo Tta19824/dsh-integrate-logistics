@@ -30,6 +30,13 @@ enum JdPCList {
         ("退款", .refunding), ("售后", .refunding), ("退货", .refunding), ("换货", .refunding), ("返修", .refunding)
     ]
 
+    /// 终态词：只要卡片上出现，就压过「待取件/请上门自提」这类过程词。
+    /// 注意不放「退款/售后」——活动订单卡片底部一直有「申请退款」按钮，会被误判。
+    private static let terminalWords: [(String, OrderStatus)] = [
+        ("已完成", .completed), ("交易成功", .completed), ("已收货", .completed),
+        ("已取消", .cancelled), ("交易关闭", .cancelled), ("已关闭", .cancelled)
+    ]
+
     /// 从 HTML 里解析订单。没解析到就返回空数组（调用方据此走别的路）。
     static func parse(html: String) -> [Row] {
         guard !html.isEmpty else { return [] }
@@ -125,6 +132,12 @@ enum JdPCList {
     // MARK: - 字段
 
     private static func statusIn(_ text: String) -> (String, OrderStatus)? {
+        // 先认「终态」词。以前这里只按 statusWords 的书写顺序扫，而「待取件/请上门自提」
+        // 排在「已完成」前面 —— 一单已经确认收货了，卡片上还留着取件码/自提字样，
+        // 就会被判成待收货，于是「已收货的单子还在订单页里挂着」（2026-11-26 用户实测）。
+        for (word, status) in terminalWords where text.contains(word) {
+            return (word, status)
+        }
         for (word, status) in statusWords where text.contains(word) {
             return (word, status)
         }

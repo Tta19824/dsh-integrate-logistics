@@ -49,11 +49,18 @@ struct OrdersView: View {
             if raw.contains("退款") || raw.contains("退货") || raw.contains("取消") || raw.contains("关闭") {
                 return false
             }
+            // 已经确认收货/交易完成的不再挂在「待收货」列表里。
+            // 2026-11-26 用户实测：京东那单确认收货后还留在页面上 —— 一是卡片里还残留
+            // 取件码/自提字样被兜底放行，二是库里的旧行（shipped + 取件码）被历史合并带回来。
+            if raw.contains("已完成") || raw.contains("交易成功") || raw.contains("已收货")
+                || raw.contains("确认收货") {
+                return false
+            }
             if order.status == .paid || order.status == .shipped { return true }
             // 兜底只对京东生效：状态词没认出来、但明显是「到了驿站等人取」的单子也得留着。
             // 以前这里只放 待付款/待收货，京东写「请上门自提」时整条被藏掉（0.36.10 实测）。
+            // 注意：光有取件码不算，必须状态词也对得上，否则取完件的单子会永远挂着。
             guard order.platform == .jd else { return false }
-            if !order.pickupCode.isEmpty { return true }
             return raw.contains("自提") || raw.contains("取件") || raw.contains("到站") || raw.contains("投递")
         }
     }
