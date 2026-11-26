@@ -725,12 +725,12 @@ enum OrderClient {
     private static func fetchPinduoduo(cookie: String) async throws -> FetchOutcome {
         let started = Date()
 
-        // 快路零·重载订单页：新开一个页面从顶部加载，读它自己发回来的**第一页**订单。
+        // 快路零·点标签现取：在订单页上依次点「待发货/待收货/全部」，收这次新发出的请求。
         // 这是唯一「数据一定是现在的」的路线 —— 重放旧存档只是当时的快照，
         // 新下的单、刚退掉的单在快照里都还是旧状态（用户 m03735 遇到的正是这个）。
-        // 注意：不能只点标签、也不能 reload（会恢复滚动位置、先发翻页请求，见 pddWarmRefetch 注释）。
+        // 注意：不能只点本来就选中的标签、也不能 reload（会先发带 offset 的翻页请求，见 pddWarmRefetch 注释）。
         if !cookie.isEmpty,
-           let warm = await WebOrderFetcher.shared.pddWarmRefetch(cookieHeader: cookie, wait: 7) {
+           let warm = await WebOrderFetcher.shared.pddWarmRefetch(cookieHeader: cookie, wait: 6) {
             var warmOrders = attachLogistics(PinduoduoParser.parse(text: warm.text, payloadJSON: warm.payload),
                                              payloadJSON: warm.payload)
             // 防御：同一条列表里可能因为「全部」和「待发货」各来一条而重复，按订单号收一次
@@ -743,7 +743,7 @@ enum OrderClient {
                 _ = PddFast.save(fromPayload: warm.payload)
                 let pickupCount = warmOrders.filter { !$0.pickupCode.isEmpty }.count
                 let note = String(format: "页面现取 %d 条（%@），取件码 %d 单 · 用时 %.1f 秒",
-                                  warmOrders.count, warm.reused ? "重载订单页" : "新开订单页", pickupCount,
+                                  warmOrders.count, warm.reused ? "点标签现取" : "新开页面现取", pickupCount,
                                   Date().timeIntervalSince(started))
                 return FetchOutcome(orders: warmOrders, httpStatus: 200, byteCount: warm.payload.count,
                                     rawFileURL: self.payloadFile(for: .pdd), note: note,
